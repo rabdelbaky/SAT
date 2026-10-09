@@ -15,6 +15,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from discovery import discover_projects as _do_discover_projects, Project
+
 __version__ = "0.1.0"
 
 # ---------------------------------------------------------------------------
@@ -502,10 +504,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    # Discover projects (stub — full implementation in Session 4).
+    # Discover projects.
     projects = _discover_projects(root, languages)
 
     if not projects:
+        print("No supported projects found.", file=sys.stderr)
         return 3
 
     if args.dry_run:
@@ -517,19 +520,26 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Stubs for later sessions
+# Project discovery (Session 4)
 # ---------------------------------------------------------------------------
 
 
-def _discover_projects(root: Path, languages: dict) -> list:
-    """Stub: returns empty list until Session 4."""
-    return []
+def _discover_projects(root: Path, languages: dict) -> list[Project]:
+    """Walk *root* and return discovered projects (delegates to discovery module)."""
+    return _do_discover_projects(root, languages)
 
 
-def _print_dry_run(projects: list) -> None:
-    """Stub: print the commands that would be run."""
+def _print_dry_run(projects: list[Project]) -> None:
+    """Print one line per project: path  language  build_files  [untested]."""
     for p in projects:
-        print(p)
+        rel = p.path.relative_to(p.path.anchor) if p.path.is_absolute() else p.path
+        # We want the path relative to nothing here — the caller already
+        # passes absolute paths; format as a relative posix string from root.
+        # Use the path as-is (absolute) and let the user see it.  For
+        # --dry-run we show the absolute path so the user can locate it.
+        build_files_str = ", ".join(p.build_files)
+        untested = "  [untested]" if not p.tested else ""
+        print(f"{p.path}  {p.language}  {build_files_str}{untested}")
 
 
 # ---------------------------------------------------------------------------

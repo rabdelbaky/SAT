@@ -1,0 +1,4 @@
+# This pyproject.toml is inside build/ — must be IGNORED by discovery.
+[project]
+name = "should-not-be-found"
+version = "0.0.0"

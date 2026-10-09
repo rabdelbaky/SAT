@@ -1,0 +1,11 @@
+{
+  "name": "monorepo-root",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["packages/*", "services/*"],
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "jest"
+  }
+}
