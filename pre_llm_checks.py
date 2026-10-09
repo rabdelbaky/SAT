@@ -1,4 +1,5 @@
-"""Pre-LLM Checks — skeleton (Session 1) + report writer (Session 2).
+"""Pre-LLM Checks — skeleton (Session 1) + report writer (Session 2)
++ CLI / path validation / trust notice (Session 3).
 
 Cross-platform Python 3.11+, no third-party packages.
 """
@@ -48,6 +49,54 @@ def load_languages(path: Path = _DEFAULT_LANGUAGES_TOML) -> dict:
     for entry in languages.values():
         entry.setdefault("tested", False)
     return languages
+
+
+# ---------------------------------------------------------------------------
+# Duration parsing
+# ---------------------------------------------------------------------------
+
+# Accepts: plain integer seconds ("600"), or a combination of h/m/s units
+# in order ("90s", "30m", "1h", "1h30m", "1h30m45s").  No decimals.
+_DURATION_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+
+
+def parse_duration(value: str) -> int:
+    """Parse a duration string and return seconds as an int.
+
+    Accepted formats:
+      - Plain integer: ``"600"`` → 600 seconds
+      - Unit suffixes (h/m/s, in order, each optional but at least one
+        must be present): ``"90s"``, ``"30m"``, ``"1h"``, ``"1h30m"``,
+        ``"1h30m45s"``
+
+    Raises:
+        ValueError: if *value* does not match any accepted format.
+    """
+    if not value:
+        raise ValueError(f"empty duration string")
+
+    # Plain integer (no letters)?
+    if value.isdigit():
+        v = int(value)
+        if v < 0:
+            raise ValueError(f"negative duration: {value!r}")
+        return v
+
+    # Must not start with a minus
+    if value.startswith("-"):
+        raise ValueError(f"negative duration not allowed: {value!r}")
+
+    m = _DURATION_RE.match(value)
+    if m is None or not any(m.groups()):
+        raise ValueError(
+            f"invalid duration {value!r}: expected plain seconds or a "
+            "combination like 90s, 30m, 1h, 1h30m, 1h30m45s"
+        )
+
+    hours = int(m.group(1) or 0)
+    minutes = int(m.group(2) or 0)
+    seconds = int(m.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
 
 
 # ---------------------------------------------------------------------------
@@ -319,14 +368,15 @@ def write_report(
 # Trust notice
 # ---------------------------------------------------------------------------
 
-_TRUST_NOTICE = (
-    "NOTICE: Pre-LLM Checks will execute scripts defined by the projects in "
-    "the target folder. Only run this tool on code you trust."
-)
 
-
-def print_trust_notice() -> None:
-    print(_TRUST_NOTICE, flush=True)
+def print_trust_notice(resolved_path: Path) -> None:
+    """Print the trust notice to *stderr*, naming *resolved_path*."""
+    print(
+        f"NOTICE: about to execute scripts defined by projects in "
+        f"{resolved_path}. Only run on code you trust.",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -334,8 +384,38 @@ def print_trust_notice() -> None:
 # ---------------------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+class _ExitingParser(argparse.ArgumentParser):
+    """ArgumentParser that exits with code 2 and prints a single ERROR line.
+
+    The default argparse behaviour prints to stderr and calls sys.exit(2),
+    but the message format includes "error:" (lowercase) and sometimes
+    multi-line usage text.  We override error() to produce the canonical
+    one-line ``ERROR: …`` format and suppress usage output on errors so that
+    nothing leaks to stdout.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        print(f"ERROR: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _timeout_type(name: str):
+    """Return an argparse *type* function for a --timeout-<name> flag."""
+
+    def _parse(value: str) -> int:
+        try:
+            return parse_duration(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"invalid value for --timeout-{name}: {value!r} — {exc}"
+            ) from exc
+
+    _parse.__name__ = f"timeout_{name}"
+    return _parse
+
+
+def build_parser() -> _ExitingParser:
+    parser = _ExitingParser(
         prog="pre-llm-checks",
         description="Gather build/lint/test evidence before an AI reviews a repo.",
     )
@@ -356,26 +436,60 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--lint-anyway", action="store_true")
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--timeout-build", type=int, default=600)
-    parser.add_argument("--timeout-lint", type=int, default=300)
-    parser.add_argument("--timeout-tests", type=int, default=900)
-    parser.add_argument("--timeout-coverage", type=int, default=900)
+    parser.add_argument(
+        "--timeout-build",
+        type=_timeout_type("build"),
+        default=600,
+        metavar="DURATION",
+    )
+    parser.add_argument(
+        "--timeout-lint",
+        type=_timeout_type("lint"),
+        default=300,
+        metavar="DURATION",
+    )
+    parser.add_argument(
+        "--timeout-tests",
+        type=_timeout_type("tests"),
+        default=900,
+        metavar="DURATION",
+    )
+    parser.add_argument(
+        "--timeout-coverage",
+        type=_timeout_type("coverage"),
+        default=900,
+        metavar="DURATION",
+    )
     parser.add_argument("--tail-lines", type=int, default=50)
     parser.add_argument("--config", default="pre-llm.toml")
     parser.add_argument("--add-gitignore", action="store_true")
     return parser
 
 
+def _validate_path(path: Path) -> str | None:
+    """Return an error message if *path* is not a readable directory, else None."""
+    if not path.exists():
+        return f"ERROR: path does not exist: {path}"
+    if not path.is_dir():
+        return f"ERROR: path is not a directory: {path}"
+    if not os.access(path, os.R_OK):
+        return f"ERROR: path is not readable: {path}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # Trust notice is always the first thing printed.
-    print_trust_notice()
-
     root = Path(args.path).resolve()
-    if not root.is_dir():
-        print(f"error: {root} is not a directory", file=sys.stderr)
+
+    # Trust notice is always first — goes to stderr, names the resolved folder.
+    print_trust_notice(root)
+
+    # Validate the path *after* printing the notice (notice is unconditional).
+    err = _validate_path(root)
+    if err is not None:
+        print(err, file=sys.stderr)
         return 2
 
     # Allow tests (and advanced users) to override the languages.toml path.
@@ -392,7 +506,6 @@ def main(argv: list[str] | None = None) -> int:
     projects = _discover_projects(root, languages)
 
     if not projects:
-        print("No supported projects found.")
         return 3
 
     if args.dry_run:
@@ -400,7 +513,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Orchestration comes in later sessions.
-    print("(orchestration not yet implemented)")
     return 0
 
 
