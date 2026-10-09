@@ -1,0 +1,116 @@
+# languages.toml — the rulebook for Pre-LLM Checks.
+# Adding a language = adding an entry here, not changing code.
+# tested = false until all applicable fixtures pass (see CONTEXT.md).
+
+[language.python]
+extensions        = [".py"]
+build_files       = ["pyproject.toml", "requirements.txt"]
+build_priority    = ["pyproject.toml", "requirements.txt"]
+dep_folders       = [".venv", "venv", "env"]
+dep_error_phrases = ["ModuleNotFoundError", "No module named"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["coverage.xml", ".coverage"]
+tested            = false
+
+[language.javascript]
+# Covers both JS and TypeScript projects (keyed as "javascript").
+extensions        = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"]
+build_files       = ["package.json"]
+build_priority    = ["package.json"]
+dep_folders       = ["node_modules"]
+dep_error_phrases = ["Cannot find module", "MODULE_NOT_FOUND", "npm ERR!"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["coverage/coverage-summary.json", "coverage/lcov.info"]
+tested            = false
+
+[language.java]
+extensions        = [".java"]
+build_files       = ["pom.xml", "build.gradle", "build.gradle.kts"]
+build_priority    = ["pom.xml", "build.gradle", "build.gradle.kts"]
+dep_folders       = []
+dep_error_phrases = ["Could not resolve", "BUILD FAILURE"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["target/site/jacoco/jacoco.xml"]
+tested            = false
+
+[language.kotlin]
+extensions        = [".kt", ".kts"]
+build_files       = ["build.gradle", "build.gradle.kts"]
+build_priority    = ["build.gradle.kts", "build.gradle"]
+dep_folders       = []
+dep_error_phrases = ["Could not resolve", "BUILD FAILURE"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["build/reports/jacoco/test/jacocoTestReport.xml"]
+tested            = false
+
+[language.go]
+extensions        = [".go"]
+build_files       = ["go.mod"]
+build_priority    = ["go.mod"]
+dep_folders       = []
+dep_error_phrases = ["cannot find module", "no required module"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["coverage.out"]
+tested            = false
+
+[language.csharp]
+# C#/.NET — keyed as "csharp".
+extensions        = [".cs"]
+build_files       = ["*.sln", "*.csproj"]
+build_priority    = ["*.sln", "*.csproj"]
+dep_folders       = []
+dep_error_phrases = ["error NU", "Unable to find package"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["coverage.cobertura.xml"]
+tested            = false
+
+[language.rust]
+extensions        = [".rs"]
+build_files       = ["Cargo.toml"]
+build_priority    = ["Cargo.toml"]
+dep_folders       = []
+dep_error_phrases = ["error[E", "could not compile"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["cobertura.xml", "lcov.info"]
+tested            = false
+
+[language.php]
+extensions        = [".php"]
+build_files       = ["composer.json"]
+build_priority    = ["composer.json"]
+dep_folders       = ["vendor"]
+dep_error_phrases = ["Class not found", "No such file or directory"]
+stages            = ["lint", "tests", "coverage"]
+coverage_files    = ["coverage.xml", "clover.xml"]
+tested            = false
+
+[language.ruby]
+extensions        = [".rb"]
+build_files       = ["Gemfile"]
+build_priority    = ["Gemfile"]
+dep_folders       = ["vendor/bundle"]
+dep_error_phrases = ["cannot load such file", "LoadError"]
+stages            = ["lint", "tests", "coverage"]
+coverage_files    = ["coverage/.resultset.json"]
+tested            = false
+
+[language.swift]
+extensions        = [".swift"]
+build_files       = ["Package.swift", "*.xcodeproj"]
+build_priority    = ["Package.swift", "*.xcodeproj"]
+dep_folders       = [".build"]
+dep_error_phrases = ["error: no such module", "missing package"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["*.lcov", "lcov.info"]
+tested            = false
+
+[language.cpp]
+# C and C++ — keyed as "cpp".
+extensions        = [".c", ".cpp", ".cc", ".cxx", ".h", ".hpp"]
+build_files       = ["CMakeLists.txt", "Makefile", "meson.build"]
+build_priority    = ["CMakeLists.txt", "Makefile", "meson.build"]
+dep_folders       = []
+dep_error_phrases = ["fatal error:", "No such file or directory"]
+stages            = ["build", "lint", "tests", "coverage"]
+coverage_files    = ["lcov.info", "coverage.xml"]
+tested            = false

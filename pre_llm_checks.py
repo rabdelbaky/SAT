@@ -1,0 +1,428 @@
+"""Pre-LLM Checks — skeleton (Session 1) + report writer (Session 2).
+
+Cross-platform Python 3.11+, no third-party packages.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+__version__ = "0.1.0"
+
+# ---------------------------------------------------------------------------
+# languages.toml loader
+# ---------------------------------------------------------------------------
+
+_DEFAULT_LANGUAGES_TOML = Path(__file__).parent / "languages.toml"
+
+
+class LanguagesLoadError(Exception):
+    """Raised when languages.toml cannot be read or parsed."""
+
+
+def load_languages(path: Path = _DEFAULT_LANGUAGES_TOML) -> dict:
+    """Return the languages table from *path*.
+
+    Keys are language names (str).  Each value is the raw TOML table for that
+    language; the ``tested`` field is always present and defaults to ``false``.
+
+    Raises:
+        LanguagesLoadError: if the file is missing or contains invalid TOML.
+    """
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except FileNotFoundError as exc:
+        raise LanguagesLoadError(f"cannot read languages.toml: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise LanguagesLoadError(f"cannot read languages.toml: {exc}") from exc
+
+    languages: dict = data.get("language", {})
+    for entry in languages.values():
+        entry.setdefault("tested", False)
+    return languages
+
+
+# ---------------------------------------------------------------------------
+# Secret masking
+# ---------------------------------------------------------------------------
+
+# Patterns that identify secrets. Each pattern replaces the captured value
+# group (group 1) with "***".
+_SECRET_PATTERNS: list[re.Pattern[str]] = [
+    # Bearer / token headers
+    re.compile(r"(Bearer\s+)\S+", re.IGNORECASE),
+    # KEY=value or TOKEN=value assignments (env-var style)
+    re.compile(
+        r"(?i)((?:api[_\-]?key|secret[_\-]?key|access[_\-]?key|auth[_\-]?token|"
+        r"api[_\-]?secret|password|passwd|token|aws[_\-]access[_\-]key(?:[_\-]id)?|"
+        r"private[_\-]?key)\s*[:=]\s*)\S+",
+    ),
+    # URL with password: scheme://user:password@host
+    re.compile(r"(://[^:/@\s]+:)[^@\s]+(@)", re.IGNORECASE),
+    # Query-string api_key / apikey / token params
+    re.compile(r"(?i)([?&](?:api_key|apikey|token|secret|password)=)[^\s&\"']+"),
+]
+
+
+def mask_secrets(text: str) -> str:
+    """Return *text* with secrets replaced by ``***``.
+
+    Covers: Bearer tokens, API keys, passwords, connection-string credentials,
+    and common env-var assignments.
+    """
+    for pattern in _SECRET_PATTERNS:
+        # Replace only the value portion (captured groups) while keeping
+        # surrounding syntax (e.g. "Bearer ", "TOKEN=", "://user:").
+        # We use a lambda so we can reconstruct the non-secret parts.
+        def _replace(m: re.Match[str], _p: re.Pattern[str] = pattern) -> str:
+            groups = m.groups()
+            if not groups:
+                return "***"
+            full = m.group(0)
+            result = full
+            # For patterns with a trailing group (e.g. the "@" in URL passwords)
+            # we need to preserve prefix + suffix around the secret.
+            if len(groups) == 1:
+                result = groups[0] + "***"
+            elif len(groups) == 2:
+                result = groups[0] + "***" + groups[1]
+            return result
+
+        text = pattern.sub(_replace, text)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# output_tail cap
+# ---------------------------------------------------------------------------
+
+_MAX_LINE_LEN = 500
+
+
+def cap_output_tail(
+    lines: list[str],
+    max_lines: int,
+    max_line_len: int = _MAX_LINE_LEN,
+) -> list[str]:
+    """Return at most *max_lines* tail lines, each truncated to *max_line_len* chars."""
+    tail = lines[-max_lines:] if len(lines) > max_lines else list(lines)
+    return [line[:max_line_len] for line in tail]
+
+
+# ---------------------------------------------------------------------------
+# Findings cap
+# ---------------------------------------------------------------------------
+
+_MAX_FINDINGS = 50
+
+
+def cap_findings(
+    findings: list,
+    max_count: int = _MAX_FINDINGS,
+) -> tuple[list, int]:
+    """Return ``(capped_list, true_total)``.
+
+    *capped_list* has at most *max_count* items (the first *max_count*).
+    *true_total* is always the original length.
+    """
+    total = len(findings)
+    return findings[:max_count], total
+
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def make_relative_path(path: Path | str, root: Path) -> str:
+    """Return *path* relative to *root*, always using forward slashes.
+
+    If *path* is not under *root* (or is not absolute), return the placeholder
+    ``"<external>"`` so that no absolute OS path leaks into the report.
+    """
+    p = Path(path)
+    try:
+        rel = p.relative_to(root)
+        result = rel.as_posix()
+        return result if result else "."
+    except ValueError:
+        return "<external>"
+
+
+# ---------------------------------------------------------------------------
+# Report builder
+# ---------------------------------------------------------------------------
+
+_REPORT_SCHEMA_VERSION = "1.0"
+_REPORT_SIZE_CAP = 200_000  # bytes
+
+
+def _build_command_entry(
+    cmd: dict,
+    repo_root: Path,
+    tail_lines: int,
+) -> dict:
+    """Convert a raw command dict into a report-ready entry."""
+    # Cap and mask output_tail
+    raw_tail: list[str] = cmd.get("output_tail") or []
+    tail = cap_output_tail(raw_tail, max_lines=tail_lines)
+    tail = [mask_secrets(line) for line in tail]
+
+    # Cap findings
+    raw_findings = cmd.get("findings")
+    if raw_findings is not None:
+        capped, total = cap_findings(raw_findings)
+    else:
+        capped, total = None, None
+
+    # Normalise log_path and source to relative forward-slash paths
+    log_path = cmd.get("log_path")
+    if log_path is not None:
+        log_path = make_relative_path(log_path, repo_root)
+
+    source = cmd.get("source")
+    if source is not None:
+        source = make_relative_path(source, repo_root)
+
+    entry: dict = {
+        "command": cmd.get("command"),
+        "scripts": cmd.get("scripts"),
+        "source": source,
+        "status": cmd.get("status"),
+        "duration_s": cmd.get("duration_s"),
+        "output_tail": tail,
+        "log_path": log_path,
+        "findings": capped,
+    }
+    if total is not None:
+        entry["findings_total"] = total
+    return entry
+
+
+def build_report(
+    projects_data: list[dict],
+    repo_root: Path,
+    tail_lines: int,
+    *,
+    status: str = "pass",
+) -> dict:
+    """Assemble and return the full report dict (not yet written to disk).
+
+    Args:
+        projects_data: list of project dicts (each with ``path``, ``language``,
+            and ``commands`` keys).
+        repo_root: root of the repository; used to make paths relative.
+        tail_lines: maximum output_tail lines per command.
+        status: overall status string for ``summary.status``.
+
+    Returns:
+        Ordered dict ready for JSON serialisation.
+    """
+    projects_out: list[dict] = []
+    for proj in projects_data:
+        cmds_out = [
+            _build_command_entry(cmd, repo_root, tail_lines)
+            for cmd in (proj.get("commands") or [])
+        ]
+        proj_path = proj.get("path")
+        if proj_path is not None:
+            proj_path = make_relative_path(proj_path, repo_root)
+        projects_out.append(
+            {
+                "path": proj_path,
+                "language": proj.get("language"),
+                "commands": cmds_out,
+            }
+        )
+
+    report: dict = {
+        "schema_version": _REPORT_SCHEMA_VERSION,
+        "summary": {
+            "status": status,
+            "project_count": len(projects_data),
+        },
+        "projects": projects_out,
+    }
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Report writer (with size cap)
+# ---------------------------------------------------------------------------
+
+
+def _serialise(report: dict) -> str:
+    return json.dumps(report, ensure_ascii=False, indent=2)
+
+
+def _trim_report(report: dict, size_cap_bytes: int) -> dict:
+    """Return a copy of *report* with tails trimmed until it fits in *size_cap_bytes*.
+
+    Strategy: repeatedly halve all tails together until the serialised size is
+    within the cap.  Always sets ``"truncated": true`` because this function is
+    only called when the report is already over cap.  If tails are all empty
+    and it still doesn't fit, set ``"truncated": true`` and return as-is.
+    """
+    report = copy.deepcopy(report)
+
+    # Collect all tail lists (mutable references into the copy)
+    tails: list[list[str]] = []
+    for proj in report.get("projects", []):
+        for cmd in proj.get("commands", []):
+            if cmd.get("output_tail") is not None:
+                tails.append(cmd["output_tail"])
+
+    while len(_serialise(report).encode("utf-8")) > size_cap_bytes:
+        non_empty = [t for t in tails if t]
+        if not non_empty:
+            break
+        # Halve every non-empty tail (keeps the tail end, discards from front)
+        for tail in non_empty:
+            keep = max(0, len(tail) // 2)
+            del tail[: len(tail) - keep]
+
+    # This function is only reached when the report was over cap, so
+    # truncated is always set regardless of whether trimming was sufficient.
+    report["truncated"] = True
+    return report
+
+
+def write_report(
+    report: dict,
+    output_path: Path,
+    size_cap_bytes: int = _REPORT_SIZE_CAP,
+) -> None:
+    """Serialise *report* to *output_path* as UTF-8 JSON, honouring *size_cap_bytes*.
+
+    If the serialised report exceeds *size_cap_bytes*:
+      1. Trim ``output_tail`` arrays (shortest first).
+      2. If still too large, add ``"truncated": true``.
+    """
+    serialised = _serialise(report)
+    if len(serialised.encode("utf-8")) > size_cap_bytes:
+        report = _trim_report(report, size_cap_bytes)
+        serialised = _serialise(report)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(serialised, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Trust notice
+# ---------------------------------------------------------------------------
+
+_TRUST_NOTICE = (
+    "NOTICE: Pre-LLM Checks will execute scripts defined by the projects in "
+    "the target folder. Only run this tool on code you trust."
+)
+
+
+def print_trust_notice() -> None:
+    print(_TRUST_NOTICE, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pre-llm-checks",
+        description="Gather build/lint/test evidence before an AI reviews a repo.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    parser.add_argument("--path", default=".", help="Root folder to analyse.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview commands without running them.",
+    )
+    parser.add_argument("--output", default="pre-llm-report.json")
+    parser.add_argument(
+        "--steps",
+        default="build,lint,tests,coverage",
+        help="Comma-separated stages to run.",
+    )
+    parser.add_argument("--lint-anyway", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--timeout-build", type=int, default=600)
+    parser.add_argument("--timeout-lint", type=int, default=300)
+    parser.add_argument("--timeout-tests", type=int, default=900)
+    parser.add_argument("--timeout-coverage", type=int, default=900)
+    parser.add_argument("--tail-lines", type=int, default=50)
+    parser.add_argument("--config", default="pre-llm.toml")
+    parser.add_argument("--add-gitignore", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    # Trust notice is always the first thing printed.
+    print_trust_notice()
+
+    root = Path(args.path).resolve()
+    if not root.is_dir():
+        print(f"error: {root} is not a directory", file=sys.stderr)
+        return 2
+
+    # Allow tests (and advanced users) to override the languages.toml path.
+    languages_toml = Path(
+        os.environ.get("PRE_LLM_LANGUAGES_TOML", _DEFAULT_LANGUAGES_TOML)
+    )
+    try:
+        languages = load_languages(languages_toml)
+    except LanguagesLoadError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    # Discover projects (stub — full implementation in Session 4).
+    projects = _discover_projects(root, languages)
+
+    if not projects:
+        print("No supported projects found.")
+        return 3
+
+    if args.dry_run:
+        _print_dry_run(projects)
+        return 0
+
+    # Orchestration comes in later sessions.
+    print("(orchestration not yet implemented)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Stubs for later sessions
+# ---------------------------------------------------------------------------
+
+
+def _discover_projects(root: Path, languages: dict) -> list:
+    """Stub: returns empty list until Session 4."""
+    return []
+
+
+def _print_dry_run(projects: list) -> None:
+    """Stub: print the commands that would be run."""
+    for p in projects:
+        print(p)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    sys.exit(main())
