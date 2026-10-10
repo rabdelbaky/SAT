@@ -130,7 +130,11 @@ def _primary_build_file(
 # ---------------------------------------------------------------------------
 
 
-def discover_projects(root: Path, languages: dict) -> list[Project]:
+def discover_projects(
+    root: Path,
+    languages: dict,
+    ignore: list[str] | None = None,
+) -> list[Project]:
     """Walk *root* and return one Project per (folder, language) pair found.
 
     Parameters
@@ -141,6 +145,10 @@ def discover_projects(root: Path, languages: dict) -> list[Project]:
         The dict returned by ``load_languages()``.  Keys are language names;
         values contain at least ``build_files`` (list[str]) and
         ``build_priority`` (list[str]), and ``tested`` (bool).
+    ignore:
+        Optional list of folder names (relative to *root*) to skip, as read
+        from pre-llm.toml ``ignore``.  These are added to the built-in
+        SKIP_DIRS for this walk only.
 
     Returns
     -------
@@ -148,9 +156,10 @@ def discover_projects(root: Path, languages: dict) -> list[Project]:
         Projects sorted by (path, language) for deterministic output.
         Returns an empty list if no supported build files are found.
     """
+    extra_skip: frozenset[str] = frozenset(ignore) if ignore else frozenset()
     projects: list[Project] = []
 
-    for folder, dirnames, _ in _walk_skipping(root):
+    for folder, dirnames, _ in _walk_skipping(root, extra_skip=extra_skip):
         folder_path = Path(folder)
 
         for lang_name, lang_cfg in languages.items():
@@ -177,15 +186,16 @@ def discover_projects(root: Path, languages: dict) -> list[Project]:
     return projects
 
 
-def _walk_skipping(root: Path):
-    """os.walk equivalent that skips SKIP_DIRS in-place.
+def _walk_skipping(root: Path, extra_skip: frozenset[str] = frozenset()):
+    """os.walk equivalent that skips SKIP_DIRS and *extra_skip* in-place.
 
     Yields (dirpath_str, dirnames, filenames) just like os.walk, but never
-    descends into any directory whose name is in SKIP_DIRS.
+    descends into any directory whose name is in SKIP_DIRS or *extra_skip*.
     """
     import os
 
+    combined = SKIP_DIRS | extra_skip
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune skip dirs in-place so os.walk does not descend into them.
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in combined]
         yield dirpath, dirnames, filenames

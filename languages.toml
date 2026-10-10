@@ -12,6 +12,32 @@ stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", ".coverage"]
 tested            = false
 
+# stage_names: script name fragments that map to each stage.
+# Keys are stage names; values are lists of accepted prefixes/exact names.
+[language.python.stage_names]
+build    = ["build"]
+lint     = ["lint", "check", "flake8", "ruff", "mypy", "pylint"]
+tests    = ["test", "tests", "pytest"]
+coverage = ["coverage", "cov"]
+
+# config_files: presence of any of these files next to the build file means
+# the tool is configured (even if no script is defined).
+# Keys are stage names; values are lists of config file patterns.
+[language.python.config_files]
+lint     = ["pyproject.toml", ".flake8", "setup.cfg", ".pylintrc",
+            "ruff.toml", ".ruff.toml"]
+tests    = ["pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"]
+coverage = [".coveragerc", "pyproject.toml", "setup.cfg"]
+
+# builtin_phases: commands that are always available for the build system,
+# require no script, no config, just the build tool.
+[language.python.builtin_phases]
+build    = []
+lint     = []
+tests    = []
+coverage = []
+
+
 [language.javascript]
 # Covers both JS and TypeScript projects (keyed as "javascript").
 extensions        = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"]
@@ -23,6 +49,34 @@ stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage/coverage-summary.json", "coverage/lcov.info"]
 tested            = false
 
+[language.javascript.stage_names]
+build    = ["build", "compile", "tsc"]
+lint     = ["lint", "check", "eslint", "tslint", "biome", "oxlint"]
+tests    = ["test", "tests", "jest", "vitest", "mocha", "jasmine"]
+coverage = ["coverage", "cov"]
+
+[language.javascript.config_files]
+lint     = [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json",
+            ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js",
+            "eslint.config.mjs", "eslint.config.cjs",
+            ".biome.json", "biome.json",
+            "oxlint.json", ".oxlintrc"]
+tests    = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+            "jest.config.cjs", "jest.config.json",
+            "vitest.config.js", "vitest.config.ts", "vitest.config.mjs",
+            ".mocharc.js", ".mocharc.yaml", ".mocharc.yml", ".mocharc.json"]
+coverage = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+            "jest.config.cjs", "jest.config.json",
+            "vitest.config.js", "vitest.config.ts", "vitest.config.mjs",
+            ".nycrc", ".nycrc.json", "nyc.config.js"]
+
+[language.javascript.builtin_phases]
+build    = []
+lint     = []
+tests    = []
+coverage = []
+
+
 [language.java]
 extensions        = [".java"]
 build_files       = ["pom.xml", "build.gradle", "build.gradle.kts"]
@@ -32,6 +86,32 @@ dep_error_phrases = ["Could not resolve", "BUILD FAILURE"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["target/site/jacoco/jacoco.xml"]
 tested            = false
+
+[language.java.stage_names]
+build    = ["build", "compile", "package", "install"]
+lint     = ["lint", "check", "checkstyle", "pmd", "spotbugs", "verify"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "jacoco"]
+
+[language.java.config_files]
+lint     = ["checkstyle.xml", ".checkstyle", "pmd.xml", "spotbugs.xml"]
+tests    = []
+coverage = ["jacoco.xml"]
+
+# Maven and Gradle have built-in lifecycle phases — no script or config needed.
+[language.java.builtin_phases]
+build    = ["mvn compile", "mvn package", "mvn install",
+            "gradle build", "gradle assemble",
+            "./mvnw compile", "./mvnw package", "./mvnw install",
+            "./gradlew build", "./gradlew assemble"]
+lint     = ["mvn checkstyle:check", "mvn pmd:check", "mvn spotbugs:check",
+            "./mvnw checkstyle:check", "./mvnw pmd:check", "./mvnw spotbugs:check",
+            "gradle check", "./gradlew check"]
+tests    = ["mvn test", "./mvnw test",
+            "gradle test", "./gradlew test"]
+coverage = ["mvn jacoco:report", "./mvnw jacoco:report",
+            "gradle jacocoTestReport", "./gradlew jacocoTestReport"]
+
 
 [language.kotlin]
 extensions        = [".kt", ".kts"]
@@ -43,6 +123,27 @@ stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["build/reports/jacoco/test/jacocoTestReport.xml"]
 tested            = false
 
+[language.kotlin.stage_names]
+build    = ["build", "compile", "assemble"]
+lint     = ["lint", "check", "detekt", "ktlint"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "jacoco"]
+
+[language.kotlin.config_files]
+lint     = ["detekt.yml", "detekt.yaml", ".detekt.yml", ".ktlint"]
+tests    = []
+coverage = []
+
+[language.kotlin.builtin_phases]
+build    = ["gradle build", "gradle assemble",
+            "./gradlew build", "./gradlew assemble"]
+lint     = ["gradle check", "./gradlew check",
+            "gradle detekt", "./gradlew detekt",
+            "gradle ktlintCheck", "./gradlew ktlintCheck"]
+tests    = ["gradle test", "./gradlew test"]
+coverage = ["gradle jacocoTestReport", "./gradlew jacocoTestReport"]
+
+
 [language.go]
 extensions        = [".go"]
 build_files       = ["go.mod"]
@@ -52,6 +153,25 @@ dep_error_phrases = ["cannot find module", "no required module"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.out"]
 tested            = false
+
+[language.go.stage_names]
+build    = ["build"]
+lint     = ["lint", "vet", "check"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "cov"]
+
+[language.go.config_files]
+lint     = [".golangci.yml", ".golangci.yaml", ".golangci.json", ".golangci.toml",
+            "golangci.yml", "golangci.yaml"]
+tests    = []
+coverage = []
+
+[language.go.builtin_phases]
+build    = ["go build ./..."]
+lint     = ["go vet ./..."]
+tests    = ["go test ./..."]
+coverage = ["go test -coverprofile=coverage.out ./..."]
+
 
 [language.csharp]
 # C#/.NET — keyed as "csharp".
@@ -64,6 +184,24 @@ stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.cobertura.xml"]
 tested            = false
 
+[language.csharp.stage_names]
+build    = ["build", "compile", "publish"]
+lint     = ["lint", "check", "format", "analyze"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "cov"]
+
+[language.csharp.config_files]
+lint     = [".editorconfig", ".stylecop", "StyleCop.Analyzers.json"]
+tests    = []
+coverage = ["coverlet.runsettings", "*.runsettings"]
+
+[language.csharp.builtin_phases]
+build    = ["dotnet build", "msbuild"]
+lint     = ["dotnet format --verify-no-changes"]
+tests    = ["dotnet test"]
+coverage = ["dotnet test --collect:\"XPlat Code Coverage\""]
+
+
 [language.rust]
 extensions        = [".rs"]
 build_files       = ["Cargo.toml"]
@@ -73,6 +211,25 @@ dep_error_phrases = ["error[E", "could not compile"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["cobertura.xml", "lcov.info"]
 tested            = false
+
+[language.rust.stage_names]
+build    = ["build"]
+lint     = ["lint", "check", "clippy", "fmt"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "cov", "tarpaulin", "llvm-cov"]
+
+[language.rust.config_files]
+lint     = [".clippy.toml", "clippy.toml"]
+tests    = []
+coverage = ["tarpaulin.toml"]
+
+[language.rust.builtin_phases]
+build    = ["cargo build", "cargo build --release"]
+lint     = ["cargo clippy", "cargo clippy -- -D warnings",
+            "cargo fmt --check", "cargo fmt -- --check"]
+tests    = ["cargo test"]
+coverage = ["cargo tarpaulin", "cargo llvm-cov"]
+
 
 [language.php]
 extensions        = [".php"]
@@ -84,6 +241,27 @@ stages            = ["lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", "clover.xml"]
 tested            = false
 
+[language.php.stage_names]
+build    = []
+lint     = ["lint", "check", "phpcs", "phpstan", "psalm", "phan"]
+tests    = ["test", "tests", "phpunit"]
+coverage = ["coverage", "cov"]
+
+[language.php.config_files]
+lint     = ["phpcs.xml", "phpcs.xml.dist", ".phpcs.xml",
+            "phpstan.neon", "phpstan.neon.dist",
+            "psalm.xml", "psalm.xml.dist",
+            ".php-cs-fixer.php", ".php-cs-fixer.dist.php"]
+tests    = ["phpunit.xml", "phpunit.xml.dist"]
+coverage = ["phpunit.xml", "phpunit.xml.dist"]
+
+[language.php.builtin_phases]
+build    = []
+lint     = []
+tests    = []
+coverage = []
+
+
 [language.ruby]
 extensions        = [".rb"]
 build_files       = ["Gemfile"]
@@ -93,6 +271,25 @@ dep_error_phrases = ["cannot load such file", "LoadError"]
 stages            = ["lint", "tests", "coverage"]
 coverage_files    = ["coverage/.resultset.json"]
 tested            = false
+
+[language.ruby.stage_names]
+build    = []
+lint     = ["lint", "check", "rubocop", "standardrb"]
+tests    = ["test", "tests", "rspec", "minitest"]
+coverage = ["coverage", "cov"]
+
+[language.ruby.config_files]
+lint     = [".rubocop.yml", ".rubocop.yaml",
+            ".standard.yml"]
+tests    = [".rspec", "spec_helper.rb"]
+coverage = [".simplecov"]
+
+[language.ruby.builtin_phases]
+build    = []
+lint     = []
+tests    = []
+coverage = []
+
 
 [language.swift]
 extensions        = [".swift"]
@@ -104,6 +301,25 @@ stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["*.lcov", "lcov.info"]
 tested            = false
 
+[language.swift.stage_names]
+build    = ["build"]
+lint     = ["lint", "check", "swiftlint", "swiftformat"]
+tests    = ["test", "tests"]
+coverage = ["coverage", "cov"]
+
+[language.swift.config_files]
+lint     = [".swiftlint.yml", ".swiftlint.yaml",
+            ".swiftformat", "swiftformat.yml"]
+tests    = []
+coverage = []
+
+[language.swift.builtin_phases]
+build    = ["swift build"]
+lint     = []
+tests    = ["swift test"]
+coverage = []
+
+
 [language.cpp]
 # C and C++ — keyed as "cpp".
 extensions        = [".c", ".cpp", ".cc", ".cxx", ".h", ".hpp"]
@@ -114,3 +330,20 @@ dep_error_phrases = ["fatal error:", "No such file or directory"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["lcov.info", "coverage.xml"]
 tested            = false
+
+[language.cpp.stage_names]
+build    = ["build", "compile", "all"]
+lint     = ["lint", "check", "clang-tidy", "cppcheck", "clang-format"]
+tests    = ["test", "tests", "ctest"]
+coverage = ["coverage", "cov"]
+
+[language.cpp.config_files]
+lint     = [".clang-tidy", ".clang-format", "CppCheckSuppressions.txt"]
+tests    = ["CTestTestfile.cmake"]
+coverage = []
+
+[language.cpp.builtin_phases]
+build    = ["cmake --build .", "make", "ninja"]
+lint     = []
+tests    = ["ctest --output-on-failure"]
+coverage = []

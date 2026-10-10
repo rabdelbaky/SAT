@@ -1,5 +1,6 @@
 """Pre-LLM Checks — skeleton (Session 1) + report writer (Session 2)
-+ CLI / path validation / trust notice (Session 3).
++ CLI / path validation / trust notice (Session 3)
++ tool and script detection + pre-llm.toml (Session 5).
 
 Cross-platform Python 3.11+, no third-party packages.
 """
@@ -16,6 +17,13 @@ import tomllib
 from pathlib import Path
 
 from discovery import discover_projects as _do_discover_projects, Project
+from detection import (
+    detect_commands,
+    load_pre_llm_toml,
+    apply_overrides,
+    PreLlmTomlError,
+    DetectionResult,
+)
 
 __version__ = "0.1.0"
 
@@ -504,15 +512,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    # Discover projects.
-    projects = _discover_projects(root, languages)
+    # Load pre-llm.toml (optional; lives at repo root).
+    config_path = root / args.config
+    try:
+        pre_llm_cfg = load_pre_llm_toml(config_path)
+    except PreLlmTomlError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    # Discover projects, honouring the ignore list from pre-llm.toml.
+    projects = _discover_projects(root, languages, ignore=pre_llm_cfg.ignore)
 
     if not projects:
         print("No supported projects found.", file=sys.stderr)
         return 3
 
+    # Build a mapping from normalised project path → override (if any).
+    override_map: dict[Path, object] = {}
+    for ov in pre_llm_cfg.overrides:
+        ov_path = (root / ov.path).resolve()
+        matched = [p for p in projects if p.path.resolve() == ov_path]
+        if not matched:
+            print(
+                f"WARNING: pre-llm.toml override path {ov.path!r} "
+                "matches no discovered project",
+                file=sys.stderr,
+            )
+        else:
+            override_map[ov_path] = ov
+
     if args.dry_run:
-        _print_dry_run(projects)
+        _print_dry_run(projects, languages, override_map)
         return 0
 
     # Orchestration comes in later sessions.
@@ -524,22 +554,56 @@ def main(argv: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _discover_projects(root: Path, languages: dict) -> list[Project]:
+def _discover_projects(
+    root: Path,
+    languages: dict,
+    ignore: list[str] | None = None,
+) -> list[Project]:
     """Walk *root* and return discovered projects (delegates to discovery module)."""
-    return _do_discover_projects(root, languages)
+    return _do_discover_projects(root, languages, ignore=ignore)
 
 
-def _print_dry_run(projects: list[Project]) -> None:
-    """Print one line per project: path  language  build_files  [untested]."""
+def _print_dry_run(
+    projects: list[Project],
+    languages: dict,
+    override_map: dict | None = None,
+) -> None:
+    """Print per-project, per-stage: each command that would run with its source,
+    then any skipped scripts with reasons.
+
+    Format (SPEC §11 --dry-run):
+      <project_path>  <language>  <build_files>  [untested]
+        <stage>: <command>  [<source>]
+        ...
+        skipped: <name>  (<reason>)
+        ...
+    """
+    if override_map is None:
+        override_map = {}
+
     for p in projects:
-        rel = p.path.relative_to(p.path.anchor) if p.path.is_absolute() else p.path
-        # We want the path relative to nothing here — the caller already
-        # passes absolute paths; format as a relative posix string from root.
-        # Use the path as-is (absolute) and let the user see it.  For
-        # --dry-run we show the absolute path so the user can locate it.
         build_files_str = ", ".join(p.build_files)
         untested = "  [untested]" if not p.tested else ""
         print(f"{p.path}  {p.language}  {build_files_str}{untested}")
+
+        lang_cfg = languages.get(p.language, {})
+        result: DetectionResult = detect_commands(p, lang_cfg)
+
+        # Apply any override for this project.
+        ov = override_map.get(p.path.resolve())
+        if ov is not None:
+            result = apply_overrides(result, ov)
+
+        # Print commands per stage.
+        for stage in lang_cfg.get("stages", []):
+            cmds = result.commands.get(stage, [])
+            for cmd in cmds:
+                argv_str = " ".join(cmd.command)
+                print(f"  {stage}: {argv_str}  [{cmd.source}]")
+
+        # Print skipped scripts.
+        for skip in result.skipped_scripts:
+            print(f"  skipped: {skip.name}  ({skip.reason})")
 
 
 # ---------------------------------------------------------------------------

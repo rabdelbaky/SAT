@@ -218,8 +218,11 @@ check(
 # ---------------------------------------------------------------------------
 
 dry = _run_dry_run(str(FIXTURE))
-# Count non-empty stdout lines (NOTICE goes to stderr)
-output_lines = [l for l in dry.stdout.splitlines() if l.strip()]
+# Count non-empty stdout lines that are project headers (not indented detail lines).
+# Session 5 adds indented command/skipped lines; we only count project headers.
+output_lines = [
+    l for l in dry.stdout.splitlines() if l.strip() and not l.startswith(" ")
+]
 check(
     "monorepo --dry-run: five output lines",
     len(output_lines) == 5,

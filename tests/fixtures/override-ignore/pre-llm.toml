@@ -1,0 +1,5 @@
+ignore = ["legacy"]
+
+[[project]]
+path = "sub"
+tests = "vitest run"

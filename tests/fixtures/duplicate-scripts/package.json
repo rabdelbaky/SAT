@@ -1,0 +1,15 @@
+{
+  "name": "duplicate-scripts",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest",
+    "test:ci": "jest",
+    "test:coverage": "jest --ci",
+    "lint": "eslint .",
+    "lint:check": "eslint ."
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0"
+  }
+}

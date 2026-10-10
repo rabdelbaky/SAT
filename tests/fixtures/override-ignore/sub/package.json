@@ -1,0 +1,12 @@
+{
+  "name": "override-ignore-sub",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0"
+  }
+}
