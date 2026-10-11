@@ -1,0 +1,5 @@
+[[project]]
+path = "."
+build = "python -c \"print('build ok')\""
+tests = "python -c \"print('tests ok')\""
+coverage = "python -c \"print('coverage ok')\""

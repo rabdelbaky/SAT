@@ -1,0 +1,9 @@
+[[project]]
+path = "proj-pass"
+build = "python -c \"print('build ok')\""
+tests = "python -c \"print('tests ok')\""
+
+[[project]]
+path = "proj-fail"
+build = "python -c \"print('build ok')\""
+tests = "python -c \"import sys; sys.exit(1)\""

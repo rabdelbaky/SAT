@@ -1,0 +1,6 @@
+[[project]]
+path = "."
+build = "python -c \"import sys; sys.exit(1)\""
+lint = "python -c \"print('lint ran')\""
+tests = "python -c \"print('tests ran')\""
+coverage = "python -c \"print('coverage ran')\""

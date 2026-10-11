@@ -243,3 +243,184 @@ project, the tool prints a one-line warning to stderr and continues (not a failu
 
 **Malformed `pre-llm.toml`:** if the file contains invalid TOML or unknown keys,
 print one-line `ERROR:` to stderr and exit 2 (no traceback).
+
+---
+
+## build-gate
+
+**Fixture layout** (relative to `tests/fixtures/build-gate/`):
+
+```
+pyproject.toml      ← Python project
+pre-llm.toml        ← override: build exits 1, lint/tests/coverage would pass
+```
+
+**`pre-llm.toml` overrides:**
+
+| Stage    | Command                              |
+|----------|--------------------------------------|
+| build    | `python -c "import sys; sys.exit(1)"` |
+| lint     | `python -c "print('lint ran')"`       |
+| tests    | `python -c "print('tests ran')"`      |
+| coverage | `python -c "print('coverage ran')"`   |
+
+**Expected stage results:**
+
+| Stage    | Status    | Reason      |
+|----------|-----------|-------------|
+| build    | fail      | —           |
+| lint     | skipped   | build_gate  |
+| tests    | skipped   | build_gate  |
+| coverage | skipped   | build_gate  |
+
+**Expected exit code:** 1 (build failed)
+
+**Build gate with `--lint-anyway`:**
+
+| Stage    | Status  | Reason     |
+|----------|---------|------------|
+| build    | fail    | —          |
+| lint     | pass    | —          |
+| tests    | skipped | build_gate |
+| coverage | skipped | build_gate |
+
+**Build gate with `--steps build,tests` (build excluded from lint, gate still on):**
+
+| Stage | Status  | Reason     |
+|-------|---------|------------|
+| build | fail    | —          |
+| tests | skipped | build_gate |
+
+**Build gate with `--steps lint,tests` (build NOT in steps → gate off):**
+
+| Stage | Status | Reason |
+|-------|--------|--------|
+| lint  | pass   | —      |
+| tests | pass   | —      |
+
+---
+
+## missing-deps
+
+**Fixture layout** (relative to `tests/fixtures/missing-deps/`):
+
+```
+pyproject.toml      ← Python project
+fake_tests.py       ← prints ModuleNotFoundError and exits 1
+pre-llm.toml        ← override: build passes, tests runs fake_tests.py
+```
+
+**`pre-llm.toml` overrides:**
+
+| Stage | Command                          |
+|-------|----------------------------------|
+| build | `python -c "print('build ok')"` |
+| tests | `python fake_tests.py`           |
+
+**Expected stage results:**
+
+| Stage    | Status               | Notes                                         |
+|----------|----------------------|-----------------------------------------------|
+| build    | pass                 | exits 0                                       |
+| lint     | no_linter_configured | no lint override, no builtin Python linter    |
+| tests    | dependencies_missing | output matched `ModuleNotFoundError` phrase   |
+| coverage | skipped              | nothing to run (no coverage override/builtin) |
+
+**Expected warnings:** `dependencies_missing`
+
+**Expected exit code:** 0 (dependencies_missing is a warning, not a failure)
+
+---
+
+## no-linter
+
+**Fixture layout** (relative to `tests/fixtures/no-linter/`):
+
+```
+pyproject.toml      ← Python project, no linter config sections
+pre-llm.toml        ← overrides for build/tests/coverage but NOT lint
+```
+
+**`pre-llm.toml` overrides:**
+
+| Stage    | Command                              |
+|----------|--------------------------------------|
+| build    | `python -c "print('build ok')"`      |
+| tests    | `python -c "print('tests ok')"`      |
+| coverage | `python -c "print('coverage ok')"`   |
+
+**Expected stage results:**
+
+| Stage    | Status               | Notes                                   |
+|----------|----------------------|-----------------------------------------|
+| build    | pass                 | —                                       |
+| lint     | no_linter_configured | no lint override, no Python builtin lint |
+| tests    | pass                 | —                                       |
+| coverage | pass                 | —                                       |
+
+**Expected exit code:** 0 (`no_linter_configured` is not a failure)
+
+---
+
+## nothing-to-run
+
+**Fixture layout** (relative to `tests/fixtures/nothing-to-run/`):
+
+```
+pyproject.toml      ← bare Python project, no tools, no scripts, no pre-llm.toml
+```
+
+**Expected result:**
+
+- No commands detected for any stage (Python has no builtin phases; no scripts; no config-driven builtins).
+- Warning: `nothing_to_run`
+- All stages: status `skipped`, reason `nothing_to_run`
+
+**Expected exit code:** 0 (`nothing_to_run` is a warning, not a failure)
+
+---
+
+## independence
+
+**Fixture layout** (relative to `tests/fixtures/independence/`):
+
+```
+pre-llm.toml        ← overrides for both sub-projects
+proj-pass/
+  pyproject.toml    ← Python project; build+tests pass
+proj-fail/
+  pyproject.toml    ← Python project; tests fail (exit 1)
+```
+
+**`pre-llm.toml` overrides:**
+
+| Project   | Stage | Command                                |
+|-----------|-------|----------------------------------------|
+| proj-pass | build | `python -c "print('build ok')"`        |
+| proj-pass | tests | `python -c "print('tests ok')"`        |
+| proj-fail | build | `python -c "print('build ok')"`        |
+| proj-fail | tests | `python -c "import sys; sys.exit(1)"` |
+
+**Expected stage results for `proj-pass`:**
+
+| Stage    | Status               |
+|----------|----------------------|
+| build    | pass                 |
+| lint     | no_linter_configured |
+| tests    | pass                 |
+| coverage | skipped              |
+
+**Expected stage results for `proj-fail`:**
+
+| Stage    | Status               |
+|----------|----------------------|
+| build    | pass                 |
+| lint     | no_linter_configured |
+| tests    | fail                 |
+| coverage | skipped              |
+
+**Key assertion:** `proj-pass` completes all its stages regardless of `proj-fail`'s outcome.
+`proj-fail` does not affect `proj-pass` in any way (projects are independent).
+
+**Expected exit code:** 1 (`proj-fail` has a test failure)
+

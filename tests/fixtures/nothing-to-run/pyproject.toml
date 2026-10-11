@@ -1,0 +1,7 @@
+[project]
+name = "nothing-to-run-fixture"
+version = "0.1.0"
+
+# Deliberately bare pyproject.toml with no tools, no scripts, no config.
+# No pre-llm.toml overrides. Detection returns no commands for any stage.
+# The orchestrator must emit nothing_to_run warning and skip all stages.

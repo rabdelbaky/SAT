@@ -1,0 +1,4 @@
+[[project]]
+path = "."
+build = "python -c \"print('build ok')\""
+tests = "python fake_tests.py"

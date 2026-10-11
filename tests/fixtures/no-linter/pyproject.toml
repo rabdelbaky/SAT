@@ -1,0 +1,7 @@
+[project]
+name = "no-linter-fixture"
+version = "0.1.0"
+
+# Deliberately no [tool.ruff], no [tool.pylint], etc.
+# No lint config file exists next to this file.
+# The orchestrator must set lint status = no_linter_configured.

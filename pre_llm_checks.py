@@ -1,6 +1,7 @@
 """Pre-LLM Checks — skeleton (Session 1) + report writer (Session 2)
 + CLI / path validation / trust notice (Session 3)
-+ tool and script detection + pre-llm.toml (Session 5).
++ tool and script detection + pre-llm.toml (Session 5)
++ stage orchestration (Session 7).
 
 Cross-platform Python 3.11+, no third-party packages.
 """
@@ -23,6 +24,12 @@ from detection import (
     apply_overrides,
     PreLlmTomlError,
     DetectionResult,
+)
+from orchestrator import (
+    OrchestratorOptions,
+    run_all,
+    compute_exit_code,
+    project_results_to_report_data,
 )
 
 __version__ = "0.1.0"
@@ -242,14 +249,14 @@ def _build_command_entry(
     else:
         capped, total = None, None
 
-    # Normalise log_path and source to relative forward-slash paths
+    # Normalise log_path to a relative forward-slash path.
+    # source is a semantic label (e.g. "script:test", "override", "builtin"),
+    # not a file path — pass it through unchanged.
     log_path = cmd.get("log_path")
     if log_path is not None:
         log_path = make_relative_path(log_path, repo_root)
 
     source = cmd.get("source")
-    if source is not None:
-        source = make_relative_path(source, repo_root)
 
     entry: dict = {
         "command": cmd.get("command"),
@@ -263,6 +270,11 @@ def _build_command_entry(
     }
     if total is not None:
         entry["findings_total"] = total
+    # Pass through optional metadata fields used by the orchestrator
+    if cmd.get("stage") is not None:
+        entry["stage"] = cmd["stage"]
+    if cmd.get("reason") is not None:
+        entry["reason"] = cmd["reason"]
     return entry
 
 
@@ -294,13 +306,14 @@ def build_report(
         proj_path = proj.get("path")
         if proj_path is not None:
             proj_path = make_relative_path(proj_path, repo_root)
-        projects_out.append(
-            {
-                "path": proj_path,
-                "language": proj.get("language"),
-                "commands": cmds_out,
-            }
-        )
+        proj_entry: dict = {
+            "path": proj_path,
+            "language": proj.get("language"),
+            "commands": cmds_out,
+        }
+        if proj.get("warnings"):
+            proj_entry["warnings"] = proj["warnings"]
+        projects_out.append(proj_entry)
 
     report: dict = {
         "schema_version": _REPORT_SCHEMA_VERSION,
@@ -545,8 +558,89 @@ def main(argv: list[str] | None = None) -> int:
         _print_dry_run(projects, languages, override_map)
         return 0
 
-    # Orchestration comes in later sessions.
-    return 0
+    # Parse requested steps
+    steps = [s.strip() for s in args.steps.split(",") if s.strip()]
+
+    orch_opts = OrchestratorOptions(
+        steps=steps,
+        lint_anyway=args.lint_anyway,
+        dry_run=args.dry_run,
+        tail_lines=args.tail_lines,
+        timeout_build=float(args.timeout_build),
+        timeout_lint=float(args.timeout_lint),
+        timeout_tests=float(args.timeout_tests),
+        timeout_coverage=float(args.timeout_coverage),
+        verbose=args.verbose,
+    )
+
+    output_path = Path(args.output)
+    if not output_path.is_absolute():
+        output_path = Path.cwd() / output_path
+
+    # Logs and .pre-llm live in the current working directory, not inside
+    # the scanned folder (which may be read-only or a fixture under test).
+    pre_llm_dir = Path.cwd() / ".pre-llm"
+    gitignore_path = Path.cwd() / ".gitignore"
+    if not gitignore_path.exists():
+        print(
+            "WARNING: .gitignore missing — logs will not be gitignored.",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            content = gitignore_path.read_text(encoding="utf-8")
+            if ".pre-llm" not in content:
+                print(
+                    "WARNING: .pre-llm not in .gitignore — logs will not be gitignored.",
+                    file=sys.stderr,
+                )
+        except OSError:
+            pass
+
+    was_interrupted = False
+    results = []
+    summary_status = "pass"
+
+    try:
+        results, was_interrupted = run_all(
+            projects=projects,
+            languages=languages,
+            detection_fn=detect_commands,
+            override_map=override_map,
+            opts=orch_opts,
+            repo_root=root,
+            log_dir=pre_llm_dir / "logs",
+        )
+        exit_code = compute_exit_code(results, was_interrupted=was_interrupted)
+        if exit_code == 130:
+            summary_status = "interrupted"
+        elif exit_code == 1:
+            summary_status = "fail"
+        else:
+            summary_status = "pass"
+    except KeyboardInterrupt:
+        was_interrupted = True
+        summary_status = "interrupted"
+        exit_code = 130
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: internal error: {exc}", file=sys.stderr)
+        summary_status = "error"
+        exit_code = 2
+
+    # Build and write report (even on crash or interrupt)
+    try:
+        projects_data = project_results_to_report_data(results, root)
+        report = build_report(
+            projects_data=projects_data,
+            repo_root=root,
+            tail_lines=args.tail_lines,
+            status=summary_status,
+        )
+        write_report(report, output_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not write report: {exc}", file=sys.stderr)
+
+    return exit_code
 
 
 # ---------------------------------------------------------------------------
