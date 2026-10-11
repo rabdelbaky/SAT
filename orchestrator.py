@@ -1,4 +1,4 @@
-"""Stage orchestrator for Pre-LLM Checks (Session 7).
+"""Stage orchestrator for Pre-LLM Checks (Sessions 7–8).
 
 Public API
 ----------
@@ -20,7 +20,7 @@ run_all(projects, languages, detection_fn, opts, repo_root) -> list[ProjectResul
     Run every project in sequence (projects are independent; one failure never
     stops the others).  Returns results in the same order as *projects*.
 
-Rules (SPEC §3 steps 5–7, §5, §6, §8):
+Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
 - Stage order: build, lint, tests, coverage (from lang_cfg "stages" list).
 - Build gate: if build fails or times out, all subsequent stages for that
   project are skipped (status="skipped", reason="build_gate") UNLESS
@@ -38,16 +38,23 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8):
 - On KeyboardInterrupt: mark current command interrupted, set result.interrupted=True,
   and return the partial result so the caller can write the report and exit 130.
 - Log files go in <log_dir>/<project_path_slug>/<stage>-<n>.log.
+- Coverage (Session 8): after the coverage stage commands complete, attempt to
+  read coverage files declared in lang_cfg["coverage_files"].  Only files
+  written during this run (mtime > stage_start_time - 2s) are used.  Results
+  are attached to StageResult.coverage_data.  Warnings (coverage_stale,
+  coverage_unreadable, coverage_missing) are propagated to ProjectResult.warnings.
 
 Cross-platform: Python 3.11+, no third-party packages.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from coverage_readers import CoverageData, read_project_coverage
 from detection import DetectionResult, StageCommand
 from discovery import Project
 from runner import run_command, CommandResult
@@ -113,6 +120,7 @@ class StageResult:
     # dependencies_missing | tool_not_installed | interrupted
     reason: Optional[str] = None  # e.g. "build_gate", "dependencies_missing"
     commands: list[CommandRecord] = field(default_factory=list)
+    coverage_data: Optional[CoverageData] = None  # set for "coverage" stage only
 
 
 @dataclass
@@ -370,6 +378,11 @@ def run_project(
         # --- Run all commands for this stage -------------------------
         stage_result = StageResult(stage=stage, status="pass")
 
+        # Record the start time for the coverage freshness check.
+        # We record it before the first command so any file written by
+        # the command is definitely newer than this timestamp.
+        stage_start_time: float = time.time()
+
         for n, cmd in enumerate(cmds):
             lp = _log_path(log_dir, slug, stage, n)
             try:
@@ -415,6 +428,22 @@ def run_project(
                     stage_result.status = "dependencies_missing"
                 elif record.status == "interrupted":
                     stage_result.status = "interrupted"
+
+        # --- Coverage file reading (Session 8) -----------------------
+        if stage == "coverage":
+            coverage_files: list[str] = lang_cfg.get("coverage_files", [])
+            output_texts = ["\n".join(rec.output_tail) for rec in stage_result.commands]
+            cov_data = read_project_coverage(
+                project_path=project.path,
+                coverage_files=coverage_files,
+                stage_start_time=stage_start_time,
+                output_texts=output_texts,
+            )
+            stage_result.coverage_data = cov_data
+            # Propagate coverage warnings to project-level warnings
+            for warn in cov_data.warnings:
+                if warn not in result.warnings:
+                    result.warnings.append(warn)
 
         result.stages.append(stage_result)
 
@@ -554,11 +583,13 @@ def project_results_to_report_data(
     """Convert orchestrator results into the format expected by build_report().
 
     Each project dict has:
-        path, language, commands (flat list across all stages)
+        path, language, commands (flat list across all stages), coverage (optional)
     """
     projects_data: list[dict] = []
     for pr in results:
         cmds_out: list[dict] = []
+        coverage_out: Optional[dict] = None
+
         for stage_result in pr.stages:
             if stage_result.commands:
                 for rec in stage_result.commands:
@@ -591,12 +622,39 @@ def project_results_to_report_data(
                         "reason": stage_result.reason,
                     }
                 )
-        projects_data.append(
-            {
-                "path": pr.project.path,
-                "language": pr.project.language,
-                "commands": cmds_out,
-                "warnings": pr.warnings,
-            }
-        )
+
+            # Attach coverage data to the report (coverage stage only)
+            if (
+                stage_result.stage == "coverage"
+                and stage_result.coverage_data is not None
+            ):
+                cov = stage_result.coverage_data
+                coverage_out = {
+                    "results": [
+                        {
+                            "line_pct": r.line_pct,
+                            "branch_pct": r.branch_pct,
+                            "source_file": _relative_path(
+                                Path(r.source_file), repo_root
+                            )
+                            if r.source_file != "<output>"
+                            else "<output>",
+                            "format": r.format,
+                        }
+                        for r in cov.results
+                    ],
+                    "lowest_line_pct": cov.lowest_line_pct(),
+                    "warnings": cov.warnings,
+                }
+
+        proj_entry: dict = {
+            "path": pr.project.path,
+            "language": pr.project.language,
+            "commands": cmds_out,
+            "warnings": pr.warnings,
+        }
+        if coverage_out is not None:
+            proj_entry["coverage"] = coverage_out
+
+        projects_data.append(proj_entry)
     return projects_data

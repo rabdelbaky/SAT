@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+coverage = "python make_stale.py"

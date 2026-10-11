@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+coverage = "python -c \"print('Name                         Stmts   Miss  Cover'); print('----------------------------  ------  ----  -----'); print('src/main.py                     100     15    85%'); print('TOTAL                           100     15    85%')\""

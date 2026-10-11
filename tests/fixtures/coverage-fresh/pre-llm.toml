@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+coverage = "python write_coverage.py"
