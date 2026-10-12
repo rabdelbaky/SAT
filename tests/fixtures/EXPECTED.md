@@ -614,3 +614,30 @@ real Maven or Gradle project before marking Java `tested`.
 with one of them is reported **once**: for the language whose source extensions (`.java` / `.kt`) exist under it
 (both languages if both exist; `.gradle` / `.gradle.kts` scripts never count as sources); with no sources at all,
 the first declared language (`java`). So `java-gradle-detect` (no sources) lists only Java commands.
+
+---
+
+## kotlin-* (Session 13)
+
+Kotlin builds with Gradle, and a Kotlin compiler or a Gradle download cannot be assumed on every machine, so there are
+**no execution fixtures for Kotlin** (the generic ok / build-fail / test-fail / lint-fail behaviour is already covered
+by the Python, JavaScript and Java fixtures, which share the same runner). Kotlin-specific behaviour is detection,
+checked with `--dry-run`:
+
+### kotlin-detect
+
+`build.gradle.kts` applies the Kotlin JVM, detekt and jacoco plugins; `src/main/kotlin/Main.kt` makes it a Kotlin
+project (see "Shared Gradle build files" under java-*). Expected lines after the project line (language `kotlin`):
+
+```
+  build: gradle build  [builtin]
+  lint: gradle detekt  [config]
+  tests: gradle test  [builtin]
+  coverage: gradle jacocoTestReport  [config]
+```
+
+A bare Kotlin `build.gradle(.kts)` lists only `build: gradle build` and `tests: gradle test`: lint and coverage run
+only when the build file declares detekt / ktlint / jacoco (or a `detekt.yml` sits next to it). The previous
+built-in `gradle check` (which also runs tests) is gone. A Kotlin project never lists `mvn ...` commands.
+
+**Not covered by fixtures:** a real Gradle run. Try one by hand before marking Kotlin `tested`.

@@ -278,14 +278,37 @@ lint     = ["detekt.yml", "detekt.yaml", ".detekt.yml", ".ktlint"]
 tests    = []
 coverage = []
 
+# build_tools: Kotlin builds with Gradle only.
+[language.kotlin.build_tools]
+"build.gradle"     = ["gradle", "./gradlew"]
+"build.gradle.kts" = ["gradle", "./gradlew"]
+
+# Build and tests are built-in Gradle tasks.  Lint and coverage are NOT
+# built-in (`gradle check` also runs tests, and detekt/ktlint/jacoco may not be
+# declared): they come from config_commands, only when the project declares them.
 [language.kotlin.builtin_phases]
 build    = ["gradle build", "gradle assemble",
             "./gradlew build", "./gradlew assemble"]
-lint     = ["gradle check", "./gradlew check",
-            "gradle detekt", "./gradlew detekt",
-            "gradle ktlintCheck", "./gradlew ktlintCheck"]
+lint     = []
 tests    = ["gradle test", "./gradlew test"]
-coverage = ["gradle jacocoTestReport", "./gradlew jacocoTestReport"]
+coverage = []
+
+[[language.kotlin.config_commands]]
+stage               = "lint"
+build_file_contains = ["detekt"]
+files               = ["detekt.yml", "detekt.yaml", ".detekt.yml"]
+command             = "gradle detekt"
+
+[[language.kotlin.config_commands]]
+stage               = "lint"
+build_file_contains = ["ktlint"]
+files               = [".ktlint"]
+command             = "gradle ktlintCheck"
+
+[[language.kotlin.config_commands]]
+stage               = "coverage"
+build_file_contains = ["jacoco"]
+command             = "gradle jacocoTestReport"
 
 
 [language.go]
