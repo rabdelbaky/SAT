@@ -25,6 +25,7 @@ from detection import (
     PreLlmTomlError,
     DetectionResult,
 )
+from output import collect_environment, probe_version, render_terminal
 from orchestrator import (
     OrchestratorOptions,
     run_all,
@@ -284,6 +285,7 @@ def build_report(
     tail_lines: int,
     *,
     status: str = "pass",
+    environment: dict | None = None,
 ) -> dict:
     """Assemble and return the full report dict (not yet written to disk).
 
@@ -293,6 +295,7 @@ def build_report(
         repo_root: root of the repository; used to make paths relative.
         tail_lines: maximum output_tail lines per command.
         status: overall status string for ``summary.status``.
+        environment: optional ``{"os": ..., "runners": {...}}`` block (SPEC §6).
 
     Returns:
         Ordered dict ready for JSON serialisation.
@@ -325,6 +328,8 @@ def build_report(
         },
         "projects": projects_out,
     }
+    if environment is not None:
+        report["environment"] = environment
     return report
 
 
@@ -629,14 +634,26 @@ def main(argv: list[str] | None = None) -> int:
         summary_status = "error"
         exit_code = 2
 
+    # Human-readable table (stdout).  Never allowed to change the exit code.
+    try:
+        if results:
+            print(render_terminal(results, root, verbose=args.verbose), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not print results table: {exc}", file=sys.stderr)
+
     # Build and write report (even on crash or interrupt)
     try:
+        environment = collect_environment(
+            results,
+            version_fn=(lambda exe, cwd: None) if was_interrupted else probe_version,
+        )
         projects_data = project_results_to_report_data(results, root)
         report = build_report(
             projects_data=projects_data,
             repo_root=root,
             tail_lines=args.tail_lines,
             status=summary_status,
+            environment=environment,
         )
         write_report(report, output_path)
     except Exception as exc:  # noqa: BLE001

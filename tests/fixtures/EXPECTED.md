@@ -424,3 +424,55 @@ proj-fail/
 
 **Expected exit code:** 1 (`proj-fail` has a test failure)
 
+
+---
+
+## terminal-table
+
+Session 9. Not a folder fixture: `tests/test_output.py` builds these three projects in memory and
+compares `render_terminal(...)` to the block below, character for character
+(`python`/`go` are untested; `javascript` is tested).
+
+| Project | Build | Lint | Tests | Coverage |
+|---|---|---|---|---|
+| `backend` (python) | pass | no_linter_configured | fail (`pytest -q`) | pass, lowest line 72.0 |
+| `web` (javascript) | fail (`npm run build`) | skipped (build_gate) | skipped | skipped |
+| `services/worker` (go) | pass | pass | pass | pass, but no coverage data (`coverage_missing`) |
+
+**Cell words:** `PASS`, `FAIL`, `TIMEOUT`, `INTR` (interrupted), `WARN` (no_linter_configured,
+dependencies_missing, tool_not_installed, or coverage without data), `SKIP` (did not run).
+Worst wins: INTR > FAIL > TIMEOUT > WARN > PASS > SKIP. A passing coverage stage with data shows
+the lowest line percentage, e.g. `72.0%`. Columns are left-aligned, two spaces apart, trailing
+spaces trimmed. A `[untested]` suffix goes on the language.
+
+**Expected output:**
+
+```
+Project          Language           Build  Lint  Tests  Coverage
+---------------  -----------------  -----  ----  -----  --------
+backend          python [untested]  PASS   WARN  FAIL   72.0%
+web              javascript         FAIL   SKIP  SKIP   SKIP
+services/worker  go [untested]      PASS   PASS  PASS   WARN
+
+Details:
+  backend / lint: WARN  no linter configured
+  backend / tests: FAIL  pytest -q  (log: .pre-llm/logs/backend/tests-0.log)
+  web / build: FAIL  npm run build  (log: .pre-llm/logs/web/build-0.log)
+  services/worker / coverage: WARN  no coverage data
+
+Warnings:
+  services/worker: coverage_missing
+
+Summary: 3 projects: 0 passed, 1 with warnings, 2 failed
+```
+
+Rules shown: the Details section lists only FAIL / TIMEOUT / INTR / WARN cells (never PASS or SKIP),
+in project order then stage order; the Warnings section lists project-level warnings; sections with
+nothing to show are left out (including their blank line). A run with every cell PASS prints only
+the table, a blank line, and the Summary.
+
+**Exit codes** (`compute_exit_code`): 0 all passed or only warnings; 1 any fail or timeout;
+130 interrupted (wins over everything); 3 no projects.
+
+**Environment block** (report key `environment`): `{"os": "<system> <release>", "runners": {"<name>": "<first line of --version>" | "unknown"}}`.
+Runners are the executables of commands that actually ran (not skipped), one entry per name.
