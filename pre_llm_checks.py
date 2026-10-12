@@ -313,6 +313,8 @@ def build_report(
         }
         if proj.get("warnings"):
             proj_entry["warnings"] = proj["warnings"]
+        if proj.get("coverage") is not None:
+            proj_entry["coverage"] = proj["coverage"]
         projects_out.append(proj_entry)
 
     report: dict = {

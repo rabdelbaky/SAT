@@ -519,6 +519,12 @@ def read_project_coverage(
             if not candidate.is_file():
                 continue
 
+            # Files in a format we do not parse (e.g. Python's binary
+            # .coverage database) are not coverage reports for our purposes:
+            # skip them silently instead of warning stale/unreadable.
+            if _detect_format(candidate) == "unknown":
+                continue
+
             # Freshness check
             try:
                 mtime = candidate.stat().st_mtime
