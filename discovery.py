@@ -56,6 +56,8 @@ SKIP_DIRS: frozenset[str] = frozenset(
         "out",
         "__pycache__",
         "coverage",
+        # SwiftPM keeps dependency checkouts (each with its own Package.swift) here
+        ".build",
     }
 )
 

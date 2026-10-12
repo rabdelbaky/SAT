@@ -846,3 +846,48 @@ Rules shown:
 - `vendor/bundle` is **not** required (it used to be, which marked almost every project `dependencies_missing`).
   Missing gems are recognised by `Could not find gem`, `Bundler::GemNotFound`, `Run \`bundle install\``,
   `cannot load such file`.
+
+---
+
+## swift-* (Session 19)
+
+Tiny SwiftPM packages with no dependencies (no downloads). Build and tests are the SwiftPM built-ins `swift build` and
+`swift test`; lint is a `pre-llm.toml` override that uses the compiler's parser, `swiftc -parse <file>`, because
+SwiftLint cannot be assumed. Requires `swift` with XCTest (Xcode, or a Swift toolchain with XCTest) on PATH. `.build/` is
+ignored by each fixture's `.gitignore`. Run with `--path <copy>`; the project is `.`, language `swift [untested]`.
+No fixture configures coverage, so Coverage is `SKIP` (Swift coverage is not supported in v1).
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `swift-ok` | PASS | PASS | PASS | SKIP | 0 | |
+| `swift-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error in `Calc.swift`; build gate skips the rest (`build_gate`) |
+| `swift-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `sum(2, 3) == 6` |
+| `swift-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `swiftc -parse scripts/Bad.swift` reports a syntax error; `scripts/` is not part of the package |
+| `swift-no-linter` | PASS | WARN | PASS | SKIP | 0 | no lint override, no `.swiftlint.yml` / `.swiftformat`: `no_linter_configured` |
+
+The author ran the real commands on Swift 6.2.3 (Xcode) in temp copies: ok build 0 / lint 0 / test 0; build-fail
+build 1; test-fail build 0 / test 1; lint-fail build 0 / lint 1 / test 0.
+
+**Not applicable for Swift:** *no-tests*. `swift test` on a package without a test target fails ("no tests found"),
+which is decided by the toolchain, not this tool.
+
+(The test function is called `sum`, not `add`: `XCTestCase` already has an `add` method, and `add(2, 3)` inside a
+test class fails to compile.)
+
+### swift-detect
+
+`Package.swift`, `.swiftlint.yml`, `.swiftformat`. Checked with `--dry-run`. Expected lines after the project line:
+
+```
+  build: swift build  [builtin]
+  lint: swiftlint  [config]
+  lint: swiftformat --lint .  [config]
+  tests: swift test  [builtin]
+```
+
+Rules shown:
+- Lint is not built-in. It runs only when the project declares SwiftLint or SwiftFormat; SwiftFormat is only ever run
+  in its read-only `--lint` form.
+- `.build/` (SwiftPM dependency checkouts, each with its own `Package.swift`) is skipped by discovery.
+- `*.xcodeproj` is listed as a build file in `languages.toml` but is a folder, and discovery matches files only, so Xcode
+  projects are not discovered (they need `xcodebuild` and a scheme, which cannot be guessed).

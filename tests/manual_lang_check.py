@@ -47,6 +47,24 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "swift": Lang(
+        tools=["swift", "swiftc"],
+        execution={
+            "swift-ok": ("PASS", "PASS", "PASS", "SKIP", 0),
+            "swift-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
+            "swift-test-fail": ("PASS", "PASS", "FAIL", "SKIP", 1),
+            "swift-lint-fail": ("PASS", "FAIL", "PASS", "SKIP", 1),
+            "swift-no-linter": ("PASS", "WARN", "PASS", "SKIP", 0),
+        },
+        detect={
+            "swift-detect": [
+                "build: swift build  [builtin]",
+                "lint: swiftlint  [config]",
+                "lint: swiftformat --lint .  [config]",
+                "tests: swift test  [builtin]",
+            ]
+        },
+    ),
     "ruby": Lang(
         tools=["ruby"],
         execution={

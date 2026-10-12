@@ -577,11 +577,24 @@ lint     = [".swiftlint.yml", ".swiftlint.yaml",
 tests    = []
 coverage = []
 
+# swift build / swift test ship with the toolchain.  Lint runs only when the project declares it.
+# swiftformat is only ever run in its read-only --lint form.  No coverage in v1: SwiftPM needs
+# `swift test --enable-code-coverage` plus an llvm-cov export step to produce lcov.
 [language.swift.builtin_phases]
 build    = ["swift build"]
 lint     = []
 tests    = ["swift test"]
 coverage = []
+
+[[language.swift.config_commands]]
+stage   = "lint"
+files   = [".swiftlint.yml", ".swiftlint.yaml"]
+command = "swiftlint"
+
+[[language.swift.config_commands]]
+stage   = "lint"
+files   = [".swiftformat", "swiftformat.yml"]
+command = "swiftformat --lint ."
 
 
 [language.cpp]
