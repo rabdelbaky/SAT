@@ -59,11 +59,15 @@ def test_load_languages_returns_all_11_languages():
     assert set(langs.keys()) == _EXPECTED_LANGUAGES
 
 
-def test_all_languages_are_untested_by_default():
+_TESTED_LANGUAGES = {"python"}
+
+
+def test_only_promoted_languages_are_tested():
     langs = load_languages()
     for name, entry in langs.items():
-        assert entry.get("tested") is False, (
-            f"Language {name!r} has tested={entry.get('tested')!r}, expected False"
+        assert entry.get("tested") == (name in _TESTED_LANGUAGES), (
+            f"Language {name!r} has tested={entry.get('tested')!r}, "
+            f"expected {name in _TESTED_LANGUAGES}"
         )
 
 

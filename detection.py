@@ -239,6 +239,19 @@ def _ini_has_section(project_path: Path, file_name: str, section: str) -> bool:
     return parser.has_section(section)
 
 
+def _package_json_has_key(project_path: Path, key: str) -> bool:
+    """Return True if package.json next to the build file has top-level *key*.
+
+    Read-only.  A missing or invalid package.json counts as no key.
+    """
+    try:
+        with open(project_path / "package.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and key in data
+
+
 def _config_rule_matches(project_path: Path, rule: dict) -> bool:
     """Return True if the project declares the tool a config_commands rule names."""
     files = rule.get("files", [])
@@ -257,7 +270,10 @@ def _config_rule_matches(project_path: Path, rule: dict) -> bool:
             continue
         if _ini_has_section(project_path, pair[0], pair[1]):
             return True
-    return False
+    return any(
+        isinstance(key, str) and _package_json_has_key(project_path, key)
+        for key in rule.get("package_json_keys", [])
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,8 @@ dep_folders       = []
 dep_error_phrases = ["ModuleNotFoundError", "No module named", "unrecognized arguments: --cov"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", ".coverage"]
-tested            = false
+# Promoted after Session 10: every applicable python-* fixture passed.
+tested            = true
 
 # stage_names: script name fragments that map to each stage.
 # Keys are stage names; values are lists of accepted prefixes/exact names.
@@ -82,31 +83,35 @@ extensions        = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"]
 build_files       = ["package.json"]
 build_priority    = ["package.json"]
 dep_folders       = ["node_modules"]
-dep_error_phrases = ["Cannot find module", "MODULE_NOT_FOUND"]
+# The node_modules check applies only when package.json declares packages in
+# one of these keys.  A project with no dependencies never gets node_modules.
+dep_declared_keys = ["dependencies", "devDependencies", "optionalDependencies",
+                     "peerDependencies"]
+# "npm ERR!" / "npm error" are deliberately absent: npm prints them for ANY
+# failing script, which would turn a real test/lint failure into
+# dependencies_missing.  "MODULE_NOT_FOUND" is absent too: Node prints it for a
+# mistyped relative require ('./calcx'), which is a code bug.
+dep_error_phrases = ["command not found",
+                     "is not recognized as an internal or external command",
+                     "npx canceled due to missing packages",
+                     "Cannot find package '"]
+# Regular expressions (Python re, multiline).  A missing *package* only: the
+# module name does not start with . / \ a drive letter, @/ or ~/ (those are
+# the project's own files or path aliases, so a miss there is a code bug).
+# The second one is the Linux /bin/sh (dash) "tool not found" line.
+dep_error_patterns = [
+    '''Cannot find module '(?![A-Za-z]:[\\/]|@/|~/)[^'./\\]''',
+    '''^sh: \d+: \S+: not found''',
+]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage/coverage-summary.json", "coverage/lcov.info"]
 tested            = false
 
 [language.javascript.stage_names]
-build    = ["build", "compile", "tsc"]
+build    = ["build", "compile", "tsc", "typecheck", "type-check"]
 lint     = ["lint", "check", "eslint", "tslint", "biome", "oxlint"]
 tests    = ["test", "tests", "jest", "vitest", "mocha", "jasmine"]
 coverage = ["coverage", "cov"]
-
-[language.javascript.config_files]
-lint     = [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json",
-            ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js",
-            "eslint.config.mjs", "eslint.config.cjs",
-            ".biome.json", "biome.json",
-            "oxlint.json", ".oxlintrc"]
-tests    = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
-            "jest.config.cjs", "jest.config.json",
-            "vitest.config.js", "vitest.config.ts", "vitest.config.mjs",
-            ".mocharc.js", ".mocharc.yaml", ".mocharc.yml", ".mocharc.json"]
-coverage = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
-            "jest.config.cjs", "jest.config.json",
-            "vitest.config.js", "vitest.config.ts", "vitest.config.mjs",
-            ".nycrc", ".nycrc.json", "nyc.config.js"]
 
 [language.javascript.builtin_phases]
 build    = []
@@ -114,6 +119,55 @@ lint     = []
 tests    = []
 coverage = []
 
+
+# config_commands: run only when the project declares the tool with a config file
+# next to package.json ("files") or with a top-level key in package.json
+# ("package_json_keys", e.g. "jest").  Run through `npx --no-install` so nothing
+# is downloaded.
+[[language.javascript.config_commands]]
+stage   = "build"
+files   = ["tsconfig.json"]
+command = "npx --no-install tsc --noEmit"
+
+[[language.javascript.config_commands]]
+stage   = "lint"
+files   = [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json",
+           ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js",
+           "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts",
+           "eslint.config.mts", "eslint.config.cts"]
+command = "npx --no-install eslint ."
+
+[[language.javascript.config_commands]]
+stage   = "lint"
+files   = ["biome.json", ".biome.json", "biome.jsonc"]
+command = "npx --no-install biome check ."
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+           "jest.config.cjs", "jest.config.cts", "jest.config.json"]
+package_json_keys = ["jest"]
+command = "npx --no-install jest"
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = ["vitest.config.js", "vitest.config.ts", "vitest.config.mjs",
+           "vitest.config.mts", "vitest.config.cjs", "vitest.config.cts"]
+command = "npx --no-install vitest run"
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = [".mocharc.js", ".mocharc.cjs", ".mocharc.yaml", ".mocharc.yml",
+           ".mocharc.json", ".mocharc.jsonc"]
+package_json_keys = ["mocha"]
+command = "npx --no-install mocha"
+
+[[language.javascript.config_commands]]
+stage   = "coverage"
+files   = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+           "jest.config.cjs", "jest.config.cts", "jest.config.json"]
+package_json_keys = ["jest"]
+command = "npx --no-install jest --coverage --coverageReporters=json-summary"
 
 [language.java]
 extensions        = [".java"]

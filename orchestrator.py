@@ -31,8 +31,11 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
 - Dependency check (data-driven from languages.toml):
     dep_folders: optional folder check; if any folder is absent, all stages
         are skipped with status="skipped", reason="dependencies_missing".
+    dep_declared_keys: the folder check is skipped when the JSON build file
+        declares no packages in any of these keys (nothing to install).
     dep_error_phrases: phrases in a failed command's output that turn
         status="fail" into status="dependencies_missing" (warning, not fail).
+    dep_error_patterns: optional regexes (re.MULTILINE), same effect as phrases.
 - Per-stage timeouts from opts (build 10m, lint 5m, tests 15m, coverage 15m).
 - Each command result: status, duration_s, output_tail, log_path, findings=null.
 - On KeyboardInterrupt: mark current command interrupted, set result.interrupted=True,
@@ -49,6 +52,8 @@ Cross-platform: Python 3.11+, no third-party packages.
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -185,12 +190,40 @@ def _log_path(log_dir: Path, slug: str, stage: str, n: int) -> Path:
     return log_dir / slug / f"{stage}-{n}.log"
 
 
-def _matches_dep_error(output: str, phrases: list[str]) -> bool:
-    """Return True if *output* contains any phrase from *phrases*."""
+def _matches_dep_error(
+    output: str, phrases: list[str], patterns: list[str] | None = None
+) -> bool:
+    """Return True if *output* contains any phrase or matches any regex pattern.
+
+    Patterns use re.MULTILINE; an invalid pattern is skipped.
+    """
     for phrase in phrases:
         if phrase in output:
             return True
+    for pattern in patterns or []:
+        try:
+            if re.search(pattern, output, re.MULTILINE):
+                return True
+        except re.error:
+            continue
     return False
+
+
+def _declares_no_dependencies(project: Project, keys: list[str]) -> bool:
+    """Return True if the JSON build file declares no packages in any of *keys*.
+
+    False when *keys* is empty or the build file cannot be read as a JSON object.
+    """
+    if not keys:
+        return False
+    try:
+        with open(project.path / project.primary_build_file, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return not any(isinstance(data.get(k), dict) and data.get(k) for k in keys)
 
 
 def _all_commands_from_overrides(detection: DetectionResult, stages: list[str]) -> bool:
@@ -300,6 +333,8 @@ def run_project(
     )
     dep_folders: list[str] = lang_cfg.get("dep_folders", [])
     dep_error_phrases: list[str] = lang_cfg.get("dep_error_phrases", [])
+    dep_error_patterns: list[str] = lang_cfg.get("dep_error_patterns", [])
+    dep_declared_keys: list[str] = lang_cfg.get("dep_declared_keys", [])
 
     # Filter to only the requested steps
     active_stages = [s for s in stages_order if s in opts.steps]
@@ -320,12 +355,14 @@ def run_project(
     # Only runs when:
     #   (a) the language declares dep_folders (non-empty list), AND
     #   (b) not ALL active commands come from pre-llm.toml overrides
-    #       (overrides bypass the folder check by design).
+    #       (overrides bypass the folder check by design), AND
+    #   (c) the build file declares at least one package (dep_declared_keys).
     # A missing folder means deps are not installed; all stages are skipped.
     if (
         dep_folders
         and active_stages
         and not _all_commands_from_overrides(detection, active_stages)
+        and not _declares_no_dependencies(project, dep_declared_keys)
     ):
         found_dep_folder = any((project.path / f).is_dir() for f in dep_folders)
         if not found_dep_folder:
@@ -408,11 +445,12 @@ def run_project(
                 return result  # caller checks .interrupted
 
             # --- dep_error_phrases post-processing --------------------
-            if record.status == "fail" and dep_error_phrases:
+            if record.status == "fail" and (dep_error_phrases or dep_error_patterns):
                 full_output = "\n".join(record.output_tail)
-                if _matches_dep_error(full_output, dep_error_phrases):
+                if _matches_dep_error(full_output, dep_error_phrases, dep_error_patterns):
                     record.status = "dependencies_missing"
-                    result.warnings.append("dependencies_missing")
+                    if "dependencies_missing" not in result.warnings:
+                        result.warnings.append("dependencies_missing")
 
             stage_result.commands.append(record)
 
@@ -438,7 +476,10 @@ def run_project(
                     stage_result.status = "interrupted"
 
         # --- Coverage file reading (Session 8) -----------------------
-        if stage == "coverage":
+        if stage == "coverage" and stage_result.status not in (
+            "dependencies_missing",
+            "tool_not_installed",
+        ):
             coverage_files: list[str] = lang_cfg.get("coverage_files", [])
             output_texts = ["\n".join(rec.output_tail) for rec in stage_result.commands]
             cov_data = read_project_coverage(

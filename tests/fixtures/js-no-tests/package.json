@@ -1,0 +1,8 @@
+{
+  "name": "js-no-tests",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node --check calc.js",
+    "lint": "node lint-check.js"
+  }
+}
