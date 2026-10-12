@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+lint = "python -B lint_check.py"

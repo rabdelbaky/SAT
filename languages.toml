@@ -37,6 +37,45 @@ lint     = []
 tests    = []
 coverage = []
 
+# config_commands: the tool is run only when the project itself declares it,
+# either as a config file next to the build file ("files") or as a table in
+# pyproject.toml ("pyproject_tables").  A dev-dependency alone never counts.
+# Python has no build stage command (build = n/a).
+[[language.python.config_commands]]
+stage            = "tests"
+files            = ["pytest.ini"]
+pyproject_tables = ["tool.pytest"]
+command          = "pytest"
+
+[[language.python.config_commands]]
+stage            = "lint"
+files            = ["ruff.toml", ".ruff.toml"]
+pyproject_tables = ["tool.ruff"]
+command          = "ruff check ."
+
+[[language.python.config_commands]]
+stage            = "lint"
+files            = [".flake8"]
+command          = "flake8 ."
+
+[[language.python.config_commands]]
+stage            = "lint"
+files            = [".pylintrc"]
+pyproject_tables = ["tool.pylint"]
+command          = "pylint --recursive=y ."
+
+[[language.python.config_commands]]
+stage            = "lint"
+files            = ["mypy.ini"]
+pyproject_tables = ["tool.mypy"]
+command          = "mypy ."
+
+[[language.python.config_commands]]
+stage            = "coverage"
+files            = [".coveragerc"]
+pyproject_tables = ["tool.coverage"]
+command          = "pytest --cov --cov-report=xml"
+
 
 [language.javascript]
 # Covers both JS and TypeScript projects (keyed as "javascript").

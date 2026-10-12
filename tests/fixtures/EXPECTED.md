@@ -476,3 +476,40 @@ the table, a blank line, and the Summary.
 
 **Environment block** (report key `environment`): `{"os": "<system> <release>", "runners": {"<name>": "<first line of --version>" | "unknown"}}`.
 Runners are the executables of commands that actually ran (not skipped), one entry per name.
+
+---
+
+## python-* (Session 10)
+
+Tiny stdlib-only Python projects. They need no installed packages: tests are `python -B -m unittest -q`,
+the "linter" is `python -B lint_check.py` (every `*.py` in the folder must parse), declared in each
+fixture's `pre-llm.toml`. `-B` keeps the fixture folder free of `__pycache__`. Python has **no build
+command**, so the Build cell is always `SKIP`. No fixture configures coverage, so Coverage is `SKIP`.
+Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python [untested]`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `python-ok` | SKIP | PASS | PASS | SKIP | 0 | |
+| `python-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | `add(2, 3) == 6` is asserted; Details lists `. / tests: FAIL` |
+| `python-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `bad_syntax.py` does not parse; tests still run (lint failure does not gate tests) |
+| `python-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no test config: the tests stage is skipped (`nothing_to_run`), no project warning |
+| `python-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no lint config: `no_linter_configured`; Details says `no linter configured` |
+
+Report checks: `projects[0].commands` has one entry per stage; lint on `python-no-linter` has
+`status: "no_linter_configured"`; `python-lint-fail` lint entry has `status: "fail"` and a non-empty `output_tail`
+naming `bad_syntax.py`.
+
+### python-detect
+
+No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool.ruff]` and
+`[tool.coverage.run]`. Nothing is installed or run: check it with `--dry-run`. Expected lines
+(after the project line, which shows the full path, `python`, `pyproject.toml` and `[untested]`):
+
+```
+  lint: ruff check .  [config]
+  tests: pytest  [config]
+  coverage: pytest --cov --cov-report=xml  [config]
+```
+
+Python has no `build` line. A `pyproject.toml` that lists `pytest` or `ruff` only as a dependency
+(and has no `[tool.*]` table) detects nothing.

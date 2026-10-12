@@ -1,0 +1,4 @@
+[[project]]
+path = "."
+lint = "python -B lint_check.py"
+tests = "python -B -m unittest -q"
