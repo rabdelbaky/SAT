@@ -758,3 +758,49 @@ and would have reported real build failures as `dependencies_missing`.
 
 **Not verified by the author:** `cargo` is not installed on the machine these fixtures were written on; the sources and
 expected cells follow the toolchain's documented behaviour. If a cell differs on your machine, that is a fixture bug.
+
+---
+
+## php-* (Session 17)
+
+PHP has **no build stage**: the Build cell is always `SKIP`. Tools are project-local (`vendor/bin/...`) and Composer
+packages cannot be assumed, so the execution fixtures replace them with the PHP interpreter through `pre-llm.toml`:
+`lint` = `php -l <file>` (syntax check), `tests` = `php run_tests.php` (plain assertions, exit 1 on failure). Requires
+`php` on PATH. Run with `--path <copy>`; the project is `.`, language `php [untested]`. Commands that come only from
+`pre-llm.toml` skip the `vendor` folder check, so no `vendor/` is needed. Coverage is `SKIP`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `php-ok` | SKIP | PASS | PASS | SKIP | 0 | |
+| `php-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) === 6` |
+| `php-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `php -l bad.php` reports a parse error; `bad.php` is not loaded by the tests |
+| `php-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no `phpunit.xml`, no composer script: tests stage skipped (`nothing_to_run`) |
+| `php-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no phpcs/phpstan/psalm config: `no_linter_configured` |
+
+### php-detect
+
+`composer.json` (no scripts) plus `phpunit.xml`, `phpcs.xml`, `phpstan.neon`. Checked with `--dry-run`. Expected lines
+after the project line (no `build:` line; two lint commands, in rule order):
+
+```
+  lint: vendor/bin/phpcs  [config]
+  lint: vendor/bin/phpstan analyse  [config]
+  tests: vendor/bin/phpunit  [config]
+  coverage: vendor/bin/phpunit --coverage-clover clover.xml  [config]
+```
+
+Rules shown:
+- Nothing is built-in for PHP. A tool runs only when the project declares it: a `composer.json` script (run as
+  `composer <script>`, always wins for its stage) or a config file next to `composer.json`
+  (`phpunit.xml(.dist)`, `phpcs.xml(.dist)`, `phpstan.neon(.dist)`, `psalm.xml(.dist)`, `.php-cs-fixer*.php`).
+  `require-dev` entries alone detect nothing.
+- `php-cs-fixer` rewrites files by default, so only `fix --dry-run --diff` is ever run.
+- Project-relative tools such as `vendor/bin/phpunit` are resolved against the **project folder** (they used to be
+  looked up from the tool's own working directory and always came out as `tool_not_installed`).
+- Coverage needs a driver (Xdebug/PCOV). Without one phpunit writes no `clover.xml` and the result is a
+  `coverage_missing` warning.
+- `dependencies_missing` is recognised by `vendor/autoload.php`, `Your requirements could not be resolved`,
+  `Composer could not find`. The old `No such file or directory` matched any failed include in the project's own code.
+
+**Not verified by the author:** `php` is not installed on the machine these fixtures were written on. If a cell differs
+on your machine, that is a fixture bug.

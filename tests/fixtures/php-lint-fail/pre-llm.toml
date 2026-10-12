@@ -1,0 +1,4 @@
+[[project]]
+path = "."
+lint = "php -l bad.php"
+tests = "php run_tests.php"

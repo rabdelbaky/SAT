@@ -33,6 +33,9 @@ _ORDINARY_FAILURES = {
     "python": ["AssertionError: 5 != 6", "SyntaxError: invalid syntax"],
     "go": ["--- FAIL: TestAdd (0.00s)", "./calc.go:4:15: syntax error: unexpected ;"],
     "csharp": ["error CS1002: ; expected", "Failed!  - Failed: 1, Passed: 0"],
+    "php": ["PHP Parse error:  syntax error, unexpected '}' in calc.php on line 3",
+            "FAILURES!\nTests: 1, Assertions: 1, Failures: 1.",
+            "Warning: include(data.txt): Failed to open stream: No such file or directory"],
 }
 
 # Output of genuinely missing dependencies: these must be recognised.
@@ -45,6 +48,8 @@ _MISSING_DEPENDENCIES = {
     "python": ["ModuleNotFoundError: No module named 'pytest'"],
     "go": ["cannot find module providing package github.com/x/y"],
     "csharp": ["error NU1101: Unable to find package Foo. No packages exist with this id"],
+    "php": ["PHP Fatal error:  Uncaught Error: Failed opening required 'vendor/autoload.php'",
+            "Your requirements could not be resolved to an installable set of packages."],
 }
 
 

@@ -47,6 +47,24 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "php": Lang(
+        tools=["php"],
+        execution={
+            "php-ok": ("SKIP", "PASS", "PASS", "SKIP", 0),
+            "php-test-fail": ("SKIP", "PASS", "FAIL", "SKIP", 1),
+            "php-lint-fail": ("SKIP", "FAIL", "PASS", "SKIP", 1),
+            "php-no-tests": ("SKIP", "PASS", "SKIP", "SKIP", 0),
+            "php-no-linter": ("SKIP", "WARN", "PASS", "SKIP", 0),
+        },
+        detect={
+            "php-detect": [
+                "lint: vendor/bin/phpcs  [config]",
+                "lint: vendor/bin/phpstan analyse  [config]",
+                "tests: vendor/bin/phpunit  [config]",
+                "coverage: vendor/bin/phpunit --coverage-clover clover.xml  [config]",
+            ]
+        },
+    ),
     "rust": Lang(
         tools=["cargo"],
         execution={

@@ -1,0 +1,4 @@
+{
+    "name": "fixture/php-lint-fail",
+    "description": "Pre-LLM Checks fixture"
+}
