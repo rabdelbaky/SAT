@@ -31,7 +31,7 @@ Fixtures (10 to 13+) are tiny; ask the agent for several languages per session i
 |---|---|---|---|---|---|---|---|
 | Python | [x] | n/a | [x] | [x] | [x] | [x] | yes |
 | JS/TS | [x] | [x] | [x] | [x] | [x] | [x] | yes |
-| Java | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
+| Java | [x] | [x] | [x] | [x] | [x] | [x] | yes |
 | Kotlin | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
 | Go | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
 | C#/.NET | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |

@@ -80,7 +80,7 @@ services/ml  python  pyproject.toml, requirements.txt
 services/worker  go  go.mod  [untested]
 ```
 
-*(Python is tested since Session 10 and JavaScript since Session 11; the others are `[untested]`
+*(Python is tested since Session 10, JavaScript since Session 11 and Java since Session 12; the others are `[untested]`
 until their fixtures pass; exact whitespace may vary.)*
 
 **No-project exit code**: running the tool against an empty folder must exit 3
@@ -613,7 +613,7 @@ Java project) and a `pre-llm.toml` that replaces the build tool with the JDK:
 `build` = `javac -d out Calc.java CalcTest.java`, `tests` = `java -cp out CalcTest`,
 `lint` = `java LintCheck.java` (fails on a `FIXME` marker). Requires `javac` and `java` (JDK 17+) on PATH.
 `out/` is ignored by a `.gitignore` in each fixture. Run with `--path <copy>`; the project is `.`,
-language `java [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+language `java` (tested since Session 12, so no `[untested]` label). No fixture configures coverage, so Coverage is `SKIP`.
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -722,25 +722,80 @@ the first declared language (`java`). So `java-gradle-detect` (no sources) lists
 
 ## kotlin-* (Session 13)
 
-Kotlin builds with Gradle, and a Kotlin compiler or a Gradle download cannot be assumed on every machine, so there are
-**no execution fixtures for Kotlin** (the generic ok / build-fail / test-fail / lint-fail behaviour is already covered
-by the Python, JavaScript and Java fixtures, which share the same runner). Kotlin-specific behaviour is detection,
-checked with `--dry-run`:
+Kotlin builds with Gradle only. The fixtures are checked by `tests/manual_lang_check.py kotlin`; every fixture is
+copied to a temp folder and run with `--path <copy>`; the project is `.`, language `kotlin [untested]`.
+
+### Real Gradle runs
+
+These run real Gradle. Requires `gradle` on PATH, a JDK, and internet access the first time (Gradle downloads the
+Kotlin, detekt and JaCoCo plugins and the libraries into its own cache; this tool installs nothing). If `gradle` is not
+on PATH, `tests/manual_lang_check.py` shows every real-Gradle check as `SKIP` (not run: gradle is not on PATH) and
+ends with `All checks passed: N/N (M Gradle checks not run: gradle is not on PATH)`; a `SKIP` never counts as
+passed.
+
+`kotlin-gradle-ok` is a tiny project: `settings.gradle.kts`, `build.gradle.kts` with the Kotlin JVM plugin
+(`2.0.21`), detekt (`io.gitlab.arturbosch.detekt` `1.23.8`, default rules) and `jacoco` (XML report on), no
+`jvmToolchain` (it would make Gradle download a JDK); `demo.Calc` (an `object` with `add`, `sub`, `mul`) and one
+`kotlin.test` test, `assertEquals(5, Calc.add(2, 3))`. `build/` and `.gradle/` are in its `.gitignore`.
+
+The other `-ok` rows are **variants** that `tests/manual_lang_check.py` makes in a temp copy of `kotlin-gradle-ok`:
+- `build-fail`: in `Calc.kt`, `a + b` becomes `a +`
+- `test-fail`: in `CalcTest.kt`, `assertEquals(5,` becomes `assertEquals(6,`
+- `lint-fail`: a `// FIXME: check overflow` line is added above `fun sub` in `Calc.kt` (detekt's default
+  `ForbiddenComment` rule flags it)
+- `no-tests`: the `src/test` folder is deleted
+- `no-linter`: the detekt plugin line is removed from `build.gradle.kts`
+
+`<percent>` means any coverage percentage: the check only looks for a cell ending in `%`, read from
+`build/reports/jacoco/test/jacocoTestReport.xml` (the report's coverage `source_file`).
+
+| Run | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `kotlin-gradle-ok` | PASS | PASS | PASS | `<percent>` | 0 | build `gradle assemble` (report `command` `["gradle", "assemble"]`); lint `gradle detekt` |
+| `kotlin-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | build `fail`, never `dependencies_missing`; lint/tests reason `build_gate` |
+| `kotlin-gradle-test-fail` | PASS | PASS | FAIL | `<percent>` | 1 | the build stage does not run tests; tests output names `CalcTest` |
+| `kotlin-gradle-lint-fail` | PASS | FAIL | PASS | `<percent>` | 1 | `gradle detekt` output names `Calc.kt`; tests still run |
+| `kotlin-gradle-no-tests` | PASS | PASS | SKIP | WARN | 0 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found`; no coverage data |
+| `kotlin-gradle-no-linter` | PASS | WARN | PASS | `<percent>` | 0 | no detekt / ktlint plugin: lint `no_linter_configured` |
+| `kotlin-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | exactly **one** table row and one report project (see below) |
+
+**Multi-project.** `kotlin-gradle-multi` has `settings.gradle.kts` with `include("app", "lib")`, a root
+`build.gradle.kts` that declares the Kotlin plugin (`apply false`) and applies it to every subproject, and `app`
+depends on `project(":lib")`; `lib` has no tests, `app` has one. It is reported as **one** project `.`: a Gradle
+subproject is built by the root build (languages.toml `subproject_rules`), so it is not built again on its own.
+
+### kotlin-gradle-wrapper
+
+A `build.gradle.kts` (`plugins { kotlin("jvm") }`), `src/main/kotlin/Main.kt`, and fake `gradlew` / `gradlew.bat`
+copied from `java-gradle-wrapper` that only print `fixture gradlew (sh) <args>` / `fixture gradlew.bat <args>`.
+Needs no Gradle.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit |
+|---|---|---|---|---|---|
+| `kotlin-gradle-wrapper` | PASS | WARN | PASS | SKIP | 0 |
+
+Report: the build entry's `command` is `["gradlew.bat", "assemble"]` on Windows, `["gradlew", "assemble"]`
+elsewhere, and its output has the matching `fixture ...` line. `environment.runners` has `gradlew` = `unknown` and
+no `gradle` entry.
 
 ### kotlin-detect
 
 `build.gradle.kts` applies the Kotlin JVM, detekt and jacoco plugins; `src/main/kotlin/Main.kt` makes it a Kotlin
-project (see "Shared Gradle build files" under java-*). Expected lines after the project line (language `kotlin`):
+project (see "Shared Gradle build files" under java-*). Checked with `--dry-run`; nothing is run. Expected lines after
+the project line (language `kotlin`):
 
 ```
-  build: gradle build  [builtin]
+  build: gradle assemble  [builtin]
   lint: gradle detekt  [config]
   tests: gradle test  [builtin]
   coverage: gradle jacocoTestReport  [config]
 ```
 
-A bare Kotlin `build.gradle(.kts)` lists only `build: gradle build` and `tests: gradle test`: lint and coverage run
-only when the build file declares detekt / ktlint / jacoco (or a `detekt.yml` sits next to it). The previous
-built-in `gradle check` (which also runs tests) is gone. A Kotlin project never lists `mvn ...` commands.
-
-**Not covered by fixtures:** a real Gradle run. Try one by hand before marking Kotlin `tested`.
+A bare Kotlin `build.gradle(.kts)` lists only `build: gradle assemble` and `tests: gradle test`. Gradle's build
+command is `assemble`, not `build`: `gradle build` also runs `test` and `check`, so a failing test or lint would show
+as a Build failure and the build gate would hide it. Lint and coverage run only when the build file declares the
+plugin id: `io.gitlab.arturbosch.detekt` or `dev.detekt` (`gradle detekt`), `org.jlleitschuh.gradle.ktlint`
+(`gradle ktlintCheck`), `jacoco` (`gradle jacocoTestReport`). Text in comments does not count. A lone `detekt.yml`
+adds nothing (without the plugin Gradle has no `detekt` task), and Spotless's `ktlint()` step does not add
+`ktlintCheck`. A Kotlin project never lists `mvn ...` commands; `--dry-run` shows plain `gradle` (the runner picks
+`gradlew` at run time).

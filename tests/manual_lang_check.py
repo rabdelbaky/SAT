@@ -8,9 +8,19 @@ For each language: execution fixtures are copied to a temp folder, run through
 pre_llm_checks.main(), and compared with the table cells and exit code in
 tests/fixtures/EXPECTED.md; detect fixtures are checked with --dry-run (nothing
 is installed or executed).  A language whose toolchain is not on PATH is
-reported as SKIP (not FAIL) for its execution fixtures; detect fixtures never
-need the toolchain.
+reported as SKIP (not run) for its execution fixtures; a SKIP is never counted
+as passed.  Detect fixtures never need the toolchain.
 
+Kotlin (see _kotlin_checks) runs real Gradle, like tests/manual_java_check.py:
+kotlin-gradle-ok and variants of it made in a temp copy (build-fail, test-fail,
+lint-fail, no-tests, no-linter, see _KOTLIN_VARIANTS), plus kotlin-gradle-multi.
+Needs `gradle` on PATH, a JDK, and internet access the first time (Gradle
+downloads the Kotlin, detekt and JaCoCo plugins into its own cache; this tool
+installs nothing).  Without `gradle` on PATH those checks are shown as SKIP.
+kotlin-gradle-wrapper (fake gradlew scripts) and kotlin-detect (--dry-run)
+need no Gradle.
+
+Every fixture is copied to a temp folder first; the repo is never written.
 Exit code: 0 if no check FAILED, 1 otherwise.
 """
 
@@ -34,6 +44,7 @@ import pre_llm_checks  # noqa: E402
 
 _FIXTURES = _REPO_ROOT / "tests" / "fixtures"
 _STAGES = ("build", "lint", "tests", "coverage")
+_WIN = sys.platform == "win32"
 
 
 @dataclass
@@ -44,22 +55,11 @@ class Lang:
     # fixture -> expected dry-run stage lines
     detect: dict[str, list[str]] = field(default_factory=dict)
     prepare: Optional[Callable[[Path], None]] = None  # e.g. create vendor/ in the copy
+    custom: Optional[Callable[[Path], None]] = None  # language-specific checks, given the temp folder
 
-
-LANGS: dict[str, Lang] = {
-    "kotlin": Lang(
-        detect={
-            "kotlin-detect": [
-                "build: gradle build  [builtin]",
-                "lint: gradle detekt  [config]",
-                "tests: gradle test  [builtin]",
-                "coverage: gradle jacocoTestReport  [config]",
-            ]
-        }
-    ),
-}
 
 _counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+_skip_notes: dict[str, int] = {}  # "<what> checks not run: <reason>" -> count
 _n = 0
 
 
@@ -68,15 +68,43 @@ def _report(label: str, text: str, detail: str = "") -> None:
     _n += 1
     _counts[label] += 1
     suffix = f"  ({detail})" if detail and label == "FAIL" else ""
-    print(f"{label}  {_n:2d}. {text}{suffix}")
+    print(f"{label}  {_n:2d}. {text}{suffix}", flush=True)
 
 
-def _run(name: str, tmp: Path, extra: list[str] | None = None, prepare=None):
-    work = tmp / name
+def _check(text: str, *, ok: bool, detail: str = "", skip: str = "", what: str = "") -> None:
+    """Record one check.  *skip* (a reason) records SKIP: not run, never a pass."""
+    global _n
+    if skip:
+        _n += 1
+        _counts["SKIP"] += 1
+        key = f"{what + ' ' if what else ''}checks not run: {skip}"
+        _skip_notes[key] = _skip_notes.get(key, 0) + 1
+        print(f"SKIP  {_n:2d}. {text}  (not run: {skip})", flush=True)
+        return
+    _report("PASS" if ok else "FAIL", text, detail)
+
+
+def _apply_edits(work: Path, edits) -> None:
+    """Apply (file, old text, new text) edits; None as file deletes src/test."""
+    for rel, old, new in edits or []:
+        if rel is None:
+            shutil.rmtree(work / "src" / "test")
+            continue
+        path = work / rel
+        text = path.read_text(encoding="utf-8")
+        assert old in text, f"{old!r} not in {path}"
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def _run(name: str, tmp: Path, extra: list[str] | None = None, prepare=None, *,
+         copy_name: str | None = None, edits=None):
+    copy_name = copy_name or name
+    work = tmp / copy_name
     shutil.copytree(_FIXTURES / name, work)
+    _apply_edits(work, edits)
     if prepare:
         prepare(work)
-    report_path = tmp / f"report_{name}.json"
+    report_path = tmp / f"report_{copy_name}.json"
     argv = ["--path", str(work), "--output", str(report_path), *(extra or [])]
     out, err = io.StringIO(), io.StringIO()
     try:
@@ -88,12 +116,175 @@ def _run(name: str, tmp: Path, extra: list[str] | None = None, prepare=None):
     return code, out.getvalue(), err.getvalue(), report
 
 
+def _rows(stdout: str) -> list[list[str]]:
+    """Table rows (split on whitespace) between the dashes line and the first blank line."""
+    lines = stdout.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("-------"):
+            rows = []
+            for row in lines[i + 1:]:
+                if not row.strip():
+                    break
+                rows.append(row.split())
+            return rows
+    return []
+
+
 def _cells(stdout: str) -> list[str]:
-    for line in stdout.splitlines():
-        parts = line.split()
+    for parts in _rows(stdout):
         if parts[:1] == ["."]:
             return parts[-4:]
     return []
+
+
+_PCT = "<percent>"  # expected cell: any coverage percentage
+
+
+def _cells_match(got: list[str], want: list[str]) -> bool:
+    return len(got) == len(want) and all(
+        (g.endswith("%") and len(g) > 1) if w == _PCT else g == w for g, w in zip(got, want)
+    )
+
+
+def _entry(report: dict | None, stage: str) -> dict:
+    for cmd in ((report or {}).get("projects") or [{}])[0].get("commands", []):
+        if cmd.get("stage") == stage:
+            return cmd
+    return {}
+
+
+def _tail(entry: dict) -> str:
+    return "\n".join(entry.get("output_tail") or [])
+
+
+# ---------------------------------------------------------------------------
+# Kotlin: real Gradle runs
+# ---------------------------------------------------------------------------
+
+_KT_CALC = "src/main/kotlin/demo/Calc.kt"
+_KT_TEST = "src/test/kotlin/demo/CalcTest.kt"
+_KT_BUILD = "build.gradle.kts"
+
+# variant -> list of (file, old text, new text); None as file = delete src/test
+_KOTLIN_VARIANTS = {
+    "ok": [],
+    "build-fail": [(_KT_CALC, "a + b", "a +")],
+    "test-fail": [(_KT_TEST, "assertEquals(5,", "assertEquals(6,")],
+    # detekt's default ForbiddenComment rule flags "FIXME:".
+    "lint-fail": [(_KT_CALC, "    fun sub", "    // FIXME: check overflow\n    fun sub")],
+    "no-tests": [(None, "", "")],
+    "no-linter": [(_KT_BUILD, '    id("io.gitlab.arturbosch.detekt") version "1.23.8"\n', "")],
+}
+
+# copy name -> (fixture, variant, build, lint, tests, coverage, exit)
+_KOTLIN_REAL = {
+    f"kotlin-gradle-{v}": ("kotlin-gradle-ok", v, *cells)
+    for v, cells in (
+        ("ok", ("PASS", "PASS", "PASS", _PCT, 0)),
+        ("build-fail", ("FAIL", "SKIP", "SKIP", "SKIP", 1)),
+        ("test-fail", ("PASS", "PASS", "FAIL", _PCT, 1)),
+        ("lint-fail", ("PASS", "FAIL", "PASS", _PCT, 1)),
+        ("no-tests", ("PASS", "PASS", "SKIP", "WARN", 0)),
+        ("no-linter", ("PASS", "WARN", "PASS", _PCT, 0)),
+    )
+}
+_KOTLIN_REAL["kotlin-gradle-multi"] = ("kotlin-gradle-multi", "ok", "PASS", "WARN", "PASS", "SKIP", 0)
+
+
+def _kotlin_checks(tmp: Path) -> None:
+    no_gradle = "" if shutil.which("gradle") else "gradle is not on PATH"
+
+    def check(text: str, *, ok: bool = False, detail: str = "", real: bool = True) -> None:
+        _check(text, ok=ok, detail=detail, skip=no_gradle if real else "", what="Gradle")
+
+    reports: dict[str, dict | None] = {}
+    for copy_name, (fixture, variant, b, li, t, c, want_exit) in _KOTLIN_REAL.items():
+        want = [b, li, t, c]
+        if no_gradle:
+            check(f"{copy_name}: one table row, cells {' '.join(want)}")
+            check(f"{copy_name}: exit code {want_exit}")
+            continue
+        print(f"      running {copy_name} (real Gradle) ...", flush=True)
+        code, out, err, rep = _run(fixture, tmp, copy_name=copy_name, edits=_KOTLIN_VARIANTS[variant])
+        reports[copy_name] = rep
+        check(f"{copy_name}: one table row, cells {' '.join(want)}",
+              ok=len(_rows(out)) == 1 and _cells_match(_cells(out), want),
+              detail=f"got {_rows(out)}\n{out}{err}")
+        check(f"{copy_name}: exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
+
+    rep = reports.get("kotlin-gradle-ok")
+    e = _entry(rep, "build")
+    check("kotlin-gradle-ok: build command is gradle assemble",
+          ok=e.get("command") == ["gradle", "assemble"] and e.get("status") == "pass", detail=f"entry={e}")
+    cov = ((rep or {}).get("projects") or [{}])[0].get("coverage") or {}
+    files = [r.get("source_file", "") for r in cov.get("results", [])]
+    check("kotlin-gradle-ok: coverage read from the JaCoCo XML",
+          ok=any(f.replace("\\", "/").endswith("jacoco/test/jacocoTestReport.xml") for f in files),
+          detail=f"coverage={cov}")
+
+    rep = reports.get("kotlin-gradle-build-fail")
+    e = _entry(rep, "build")
+    reasons = [_entry(rep, s).get("reason") for s in ("lint", "tests")]
+    check("kotlin-gradle-build-fail: build is fail (not dependencies_missing), lint/tests skipped by build_gate",
+          ok=e.get("status") == "fail" and reasons == ["build_gate"] * 2,
+          detail=f"entry={e} reasons={reasons}")
+
+    rep = reports.get("kotlin-gradle-test-fail")
+    e = _entry(rep, "tests")
+    check("kotlin-gradle-test-fail: build passed, tests is fail and names CalcTest",
+          ok=_entry(rep, "build").get("status") == "pass"
+          and e.get("status") == "fail" and "CalcTest" in _tail(e),
+          detail=f"tests={e}")
+
+    e = _entry(reports.get("kotlin-gradle-lint-fail"), "lint")
+    check("kotlin-gradle-lint-fail: lint is fail and output names Calc.kt",
+          ok=e.get("status") == "fail" and "Calc.kt" in _tail(e), detail=f"entry={e}")
+
+    e = _entry(reports.get("kotlin-gradle-no-tests"), "tests")
+    check("kotlin-gradle-no-tests: tests skipped with reason no_tests_found",
+          ok=e.get("status") == "skipped" and e.get("reason") == "no_tests_found", detail=f"entry={e}")
+
+    e = _entry(reports.get("kotlin-gradle-no-linter"), "lint")
+    check("kotlin-gradle-no-linter: lint status is no_linter_configured",
+          ok=e.get("status") == "no_linter_configured", detail=f"entry={e}")
+
+    rep = reports.get("kotlin-gradle-multi")
+    projects = (rep or {}).get("projects") or []
+    check("kotlin-gradle-multi: report has one project (subprojects are part of the root)",
+          ok=len(projects) == 1 and _entry(rep, "tests").get("status") == "pass",
+          detail=f"projects={[p.get('path') for p in projects]}")
+
+    # --- wrapper: fake gradlew scripts, no Gradle needed -----------------------
+    wrapper = "gradlew.bat" if _WIN else "gradlew"
+    marker = "fixture gradlew.bat assemble" if _WIN else "fixture gradlew (sh) assemble"
+    code, out, err, rep = _run("kotlin-gradle-wrapper", tmp)
+    check("kotlin-gradle-wrapper: table cells PASS WARN PASS SKIP, exit 0",
+          ok=_cells(out) == ["PASS", "WARN", "PASS", "SKIP"] and code == 0,
+          detail=f"exit={code} got {_cells(out)}\n{out}{err}", real=False)
+    e = _entry(rep, "build")
+    check(f"kotlin-gradle-wrapper: build ran {wrapper} (output has '{marker}')",
+          ok=e.get("command") == [wrapper, "assemble"] and marker in _tail(e),
+          detail=f"entry={e}", real=False)
+    runners = ((rep or {}).get("environment") or {}).get("runners", {})
+    check("kotlin-gradle-wrapper: environment does not claim the gradle on PATH ran",
+          # the environment key drops .bat: "gradlew.bat" -> "gradlew"
+          ok="gradle" not in runners and runners.get("gradlew") == "unknown",
+          detail=f"runners={runners}", real=False)
+
+
+LANGS: dict[str, Lang] = {
+    "kotlin": Lang(
+        detect={
+            "kotlin-detect": [
+                "build: gradle assemble  [builtin]",
+                "lint: gradle detekt  [config]",
+                "tests: gradle test  [builtin]",
+                "coverage: gradle jacocoTestReport  [config]",
+            ]
+        },
+        custom=_kotlin_checks,
+    ),
+}
 
 
 def run_checks(selected: list[str]) -> int:
@@ -102,23 +293,21 @@ def run_checks(selected: list[str]) -> int:
         spec = LANGS[lang]
         print(f"\n== {lang} ==")
         missing = [t for t in spec.tools if shutil.which(t) is None]
-        with tempfile.TemporaryDirectory() as td:
+        # ignore_cleanup_errors: a Gradle daemon may still hold a file in the copy.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             tmp = Path(td)
             for name, (b, li, t, c, want_exit) in spec.execution.items():
                 if missing:
-                    _report("SKIP", f"{name}: needs {', '.join(missing)} on PATH")
+                    reason = f"{', '.join(missing)} not on PATH"
+                    _check(f"{name}: table cells {b} {li} {t} {c}", ok=False, skip=reason)
+                    _check(f"{name}: exit code {want_exit}", ok=False, skip=reason)
                     continue
                 code, out, err, _ = _run(name, tmp, prepare=spec.prepare)
-                _report(
-                    "PASS" if _cells(out) == [b, li, t, c] else "FAIL",
-                    f"{name}: table cells {b} {li} {t} {c}",
-                    f"got {_cells(out)}\n{out}{err}",
-                )
-                _report(
-                    "PASS" if code == want_exit else "FAIL",
-                    f"{name}: exit code {want_exit}",
-                    f"got {code}",
-                )
+                _check(f"{name}: table cells {b} {li} {t} {c}",
+                       ok=_cells(out) == [b, li, t, c], detail=f"got {_cells(out)}\n{out}{err}")
+                _check(f"{name}: exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
+            if spec.custom:
+                spec.custom(tmp)
             for name, want in spec.detect.items():
                 code, out, err, _ = _run(name, tmp, ["--dry-run"])
                 got = [
@@ -126,12 +315,14 @@ def run_checks(selected: list[str]) -> int:
                     for ln in out.splitlines()
                     if ln.strip().split(":")[0] in _STAGES
                 ]
-                _report(
-                    "PASS" if got == want and code == 0 else "FAIL",
-                    f"{name}: --dry-run lists exactly the expected stage commands",
-                    f"exit={code}\n{out}{err}",
-                )
-    print(f"\nPASS {_counts['PASS']}  FAIL {_counts['FAIL']}  SKIP {_counts['SKIP']}")
+                _check(f"{name}: --dry-run lists exactly the expected stage commands",
+                       ok=got == want and code == 0, detail=f"exit={code}\n{out}{err}")
+
+    print()
+    passed, total = _counts["PASS"], _counts["PASS"] + _counts["FAIL"]
+    notes = "; ".join(f"{count} {key}" for key, count in _skip_notes.items())
+    note = f" ({notes})" if notes else ""
+    print(f"{'All checks passed' if not _counts['FAIL'] else 'Some checks FAILED'}: {passed}/{total}{note}")
     return 1 if _counts["FAIL"] else 0
 
 

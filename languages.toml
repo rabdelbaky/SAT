@@ -187,7 +187,8 @@ coverage_files    = ["target/site/jacoco/jacoco.xml",
 # Gradle: a test task that was NO-SOURCE and none that executed.
 no_tests_patterns  = ['''No tests to run\.''', '''^> Task \S*:test NO-SOURCE''']
 tests_ran_patterns = ['''Tests run: [1-9]''', '''^> Task \S*:test( UP-TO-DATE| FROM-CACHE)?\s*$''']
-tested            = false
+# Promoted after Session 12: every applicable java-* fixture passed.
+tested            = true
 
 # subproject_rules: a Maven module (listed in a parent pom.xml <module>) or a
 # Gradle subproject (below a folder with settings.gradle[.kts]) is built by
@@ -280,45 +281,54 @@ build_priority    = ["build.gradle.kts", "build.gradle"]
 dep_folders       = []
 dep_error_phrases = ["Could not resolve dependencies", "Could not resolve artifact", "Could not resolve all dependencies", "Could not resolve all files"]
 stages            = ["build", "lint", "tests", "coverage"]
+# Gradle jacocoTestReport writes the XML only when the build file enables it
+# (reports { xml.required = true }).
 coverage_files    = ["build/reports/jacoco/test/jacocoTestReport.xml"]
+# A tests command that passed but ran no test shows SKIP (no_tests_found), not
+# PASS (same Gradle patterns as Java): a test task that was NO-SOURCE and none
+# that executed.
+no_tests_patterns  = ['''^> Task \S*:test NO-SOURCE''']
+tests_ran_patterns = ['''^> Task \S*:test( UP-TO-DATE| FROM-CACHE)?\s*$''']
 tested            = false
 
-[language.kotlin.stage_names]
-build    = ["build", "compile", "assemble"]
-lint     = ["lint", "check", "detekt", "ktlint"]
-tests    = ["test", "tests"]
-coverage = ["coverage", "jacoco"]
+# subproject_rules: a Gradle subproject (below a folder with
+# settings.gradle[.kts]) is built by that root build, so it is part of the
+# root project, not a project of its own (same as Java).
+[language.kotlin.subproject_rules]
+"build.gradle"     = "gradle_settings"
+"build.gradle.kts" = "gradle_settings"
 
-[language.kotlin.config_files]
-lint     = ["detekt.yml", "detekt.yaml", ".detekt.yml", ".ktlint"]
-tests    = []
-coverage = []
-
-# build_tools: Kotlin builds with Gradle only.
+# build_tools: Kotlin builds with Gradle only.  The runner swaps in gradlew /
+# gradlew.bat when the project has one.
 [language.kotlin.build_tools]
-"build.gradle"     = ["gradle", "./gradlew"]
-"build.gradle.kts" = ["gradle", "./gradlew"]
+"build.gradle"     = ["gradle"]
+"build.gradle.kts" = ["gradle"]
 
 # Build and tests are built-in Gradle tasks.  Lint and coverage are NOT
 # built-in (`gradle check` also runs tests, and detekt/ktlint/jacoco may not be
 # declared): they come from config_commands, only when the project declares them.
 [language.kotlin.builtin_phases]
-build    = ["gradle build", "gradle assemble",
-            "./gradlew build", "./gradlew assemble"]
+# Gradle "build" also runs test and check, so a failing test or lint would
+# show as a Build failure and the build gate would hide it.  "assemble"
+# compiles and packages only.
+build    = ["gradle assemble"]
 lint     = []
-tests    = ["gradle test", "./gradlew test"]
+tests    = ["gradle test"]
 coverage = []
 
+# config_commands: the tool runs only when the build file declares its plugin
+# id (build_file_contains; comments in the build file are ignored).  A lone
+# detekt.yml does not count: without the plugin Gradle has no detekt task.
+# The ktlint id is the Gradle plugin's, so Spotless's `ktlint()` step (which
+# adds no ktlintCheck task) does not match.
 [[language.kotlin.config_commands]]
 stage               = "lint"
-build_file_contains = ["detekt"]
-files               = ["detekt.yml", "detekt.yaml", ".detekt.yml"]
+build_file_contains = ["io.gitlab.arturbosch.detekt", "dev.detekt"]
 command             = "gradle detekt"
 
 [[language.kotlin.config_commands]]
 stage               = "lint"
-build_file_contains = ["ktlint"]
-files               = [".ktlint"]
+build_file_contains = ["org.jlleitschuh.gradle.ktlint"]
 command             = "gradle ktlintCheck"
 
 [[language.kotlin.config_commands]]
