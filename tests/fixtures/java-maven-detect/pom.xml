@@ -1,0 +1,12 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>fixture</groupId>
+  <artifactId>java-maven-detect</artifactId>
+  <version>1.0.0</version>
+  <build>
+    <plugins>
+      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>
+      <plugin><artifactId>jacoco-maven-plugin</artifactId></plugin>
+    </plugins>
+  </build>
+</project>
