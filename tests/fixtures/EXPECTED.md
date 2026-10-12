@@ -716,3 +716,45 @@ Rules shown:
   project folder, in a fresh GUID folder per run); files from earlier runs are stale by mtime and ignored.
 
 **Not covered by fixtures:** a real `dotnet build` / `dotnet test` run. Try one by hand before marking C# `tested`.
+
+---
+
+## rust-* (Session 16)
+
+Tiny crates with no dependencies (no downloads). Commands are the Cargo toolchain's built-ins: `cargo build`,
+`cargo clippy`, `cargo test`. Requires `cargo` with the `clippy` component (`rustup component add clippy`) on PATH.
+`target/` and `Cargo.lock` are ignored by each fixture's `.gitignore`. Run with `--path <copy>`; the project is `.`,
+language `rust [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `rust-ok` | PASS | PASS | PASS | SKIP | 0 | |
+| `rust-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error; build gate skips the rest (`build_gate`). Must **not** be reported as `dependencies_missing` |
+| `rust-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) == 6` |
+| `rust-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `#![deny(clippy::needless_return)]` plus `return a + b;`: clippy errors, rustc and `cargo test` do not run it |
+
+**Not applicable for Rust:**
+- *no-linter*: `cargo clippy` ships with the toolchain, so every crate has a linter.
+- *no-tests*: `cargo test` on a crate without tests succeeds, which is decided by the toolchain.
+
+### rust-detect
+
+`Cargo.toml` with a `[package.metadata.tarpaulin]` table. Checked with `--dry-run`. Expected lines after the project line:
+
+```
+  build: cargo build  [builtin]
+  lint: cargo clippy  [builtin]
+  tests: cargo test  [builtin]
+  coverage: cargo tarpaulin --out Xml  [config]
+```
+
+Coverage is **not** built-in. `cargo tarpaulin` is a separate install, so it runs only when the crate declares it
+(`tarpaulin.toml`, `.tarpaulin.toml`, or a `[package.metadata.tarpaulin]` table). A crate without any of them has no
+coverage command. tarpaulin's `--out Xml` writes `cobertura.xml`, which the Cobertura reader parses.
+
+**Dependency detection.** `dep_error_phrases` for Rust are `no matching package`, `failed to select a version`,
+`failed to download`, ``failed to get ` ``. The earlier `could not compile` and `error[E` appear for *every* rustc error
+and would have reported real build failures as `dependencies_missing`.
+
+**Not verified by the author:** `cargo` is not installed on the machine these fixtures were written on; the sources and
+expected cells follow the toolchain's documented behaviour. If a cell differs on your machine, that is a fixture bug.

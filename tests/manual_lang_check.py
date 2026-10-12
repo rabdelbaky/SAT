@@ -47,6 +47,23 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "rust": Lang(
+        tools=["cargo"],
+        execution={
+            "rust-ok": ("PASS", "PASS", "PASS", "SKIP", 0),
+            "rust-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
+            "rust-test-fail": ("PASS", "PASS", "FAIL", "SKIP", 1),
+            "rust-lint-fail": ("PASS", "FAIL", "PASS", "SKIP", 1),
+        },
+        detect={
+            "rust-detect": [
+                "build: cargo build  [builtin]",
+                "lint: cargo clippy  [builtin]",
+                "tests: cargo test  [builtin]",
+                "coverage: cargo tarpaulin --out Xml  [config]",
+            ]
+        },
+    ),
     "csharp": Lang(
         detect={
             "csharp-detect": [
