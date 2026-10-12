@@ -641,3 +641,45 @@ only when the build file declares detekt / ktlint / jacoco (or a `detekt.yml` si
 built-in `gradle check` (which also runs tests) is gone. A Kotlin project never lists `mvn ...` commands.
 
 **Not covered by fixtures:** a real Gradle run. Try one by hand before marking Kotlin `tested`.
+
+---
+
+## go-* (Session 14)
+
+Tiny Go modules, standard library only (no downloads). Commands are the Go toolchain's own built-ins:
+`go build ./...`, `go vet ./...`, `go test ./...`, `go test -coverprofile=coverage.out ./...`. Requires `go` (1.18+) on
+PATH. `coverage.out` is written into the project folder and ignored by each fixture's `.gitignore`. Run with
+`--path <copy>`; the project is `.`, language `go [untested]`.
+
+The Coverage cell is the lowest line percentage from `coverage.out`, a **Go cover profile** (statement coverage; it is
+not lcov and has no branch data).
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `go-ok` | PASS | PASS | PASS | 100.0% | 0 | |
+| `go-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error; build gate skips the rest (`build_gate`) |
+| `go-test-fail` | PASS | PASS | FAIL | FAIL | 1 | asserts `Add(2, 3) == 6`; the coverage command runs the tests again, so it fails too |
+| `go-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 | `go vet` (copylocks) rejects `Show(c Counter)`; `go test` does not run that check, so tests still pass |
+
+**Not applicable for Go:**
+- *no-linter*: `go vet` ships with the toolchain, so every Go module has a linter (a `.golangci.yml` replaces it, see
+  go-detect).
+- *no-tests*: `go test ./...` on a module without tests succeeds (`[no test files]`) and what the profile contains
+  depends on the Go version, so the result is decided by the toolchain, not this tool.
+
+### go-detect
+
+`go.mod` plus `.golangci.yml`. Checked with `--dry-run`. Expected lines after the project line:
+
+```
+  build: go build ./...  [builtin]
+  lint: golangci-lint run  [config]
+  tests: go test ./...  [builtin]
+  coverage: go test -coverprofile=coverage.out ./...  [builtin]
+```
+
+Without `.golangci.yml` the lint line is `lint: go vet ./...  [builtin]`.
+
+**Not verified by the author:** `go` is not installed on the machine these fixtures were written on; the Go sources and
+the expected cells are derived from the Go toolchain's documented behaviour. If a cell differs on your machine, that is a
+fixture bug to report.

@@ -19,7 +19,9 @@ read_coverage_file(path) -> CoverageResult | None
                        clover.xml)         — xml.etree
       - Istanbul json-summary
                      (coverage-summary.json) — json
-      - lcov         (lcov.info, *.lcov, coverage.out, .resultset.json skipped)
+      - lcov         (lcov.info, *.lcov)
+      - Go cover profile (coverage.out, as written by
+                       `go test -coverprofile`) — statement coverage, no branches
 
     A malformed or empty file → returns None (caller emits coverage_unreadable).
 
@@ -92,7 +94,8 @@ class CoverageResult:
     source_file:
         The path that was read, as a string (for the report).
     format:
-        A short label: "jacoco", "cobertura", "istanbul", "lcov", "output".
+        A short label: "jacoco", "cobertura", "istanbul", "lcov", "gocover",
+        "output".
     """
 
     line_pct: float
@@ -137,8 +140,11 @@ def _detect_format(path: Path) -> str:
     if name == "coverage-summary.json":
         return "istanbul"
     # lcov variants
-    if name in ("lcov.info", "coverage.out") or name.endswith(".lcov"):
+    if name in ("lcov.info",) or name.endswith(".lcov"):
         return "lcov"
+    # Go cover profile ("mode: set" header), written by `go test -coverprofile`
+    if name == "coverage.out":
+        return "gocover"
     # JaCoCo XML — identified by 'jacoco' in the filename
     if "jacoco" in name and name.endswith(".xml"):
         return "jacoco"
@@ -327,7 +333,7 @@ def _read_istanbul(path: Path) -> Optional[CoverageResult]:
 
 
 def _read_lcov(path: Path) -> Optional[CoverageResult]:
-    """Parse an lcov.info (or *.lcov / coverage.out) file and return a CoverageResult.
+    """Parse an lcov.info (or *.lcov) file and return a CoverageResult.
 
     lcov format (relevant lines):
         SF:<source file>
@@ -399,6 +405,53 @@ def _read_lcov(path: Path) -> Optional[CoverageResult]:
     )
 
 
+def _read_gocover(path: Path) -> Optional[CoverageResult]:
+    """Parse a Go cover profile and return a CoverageResult, or None.
+
+    Format:
+        mode: set|count|atomic
+        <file>:<line>.<col>,<line>.<col> <statements> <count>
+
+    Line coverage = statements in blocks with count > 0 / all statements.
+    Malformed block lines are skipped.  Returns None when the header is
+    missing or no block line parses (e.g. a package without tests).
+    """
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    lines = content.splitlines()
+    if not lines or not lines[0].startswith("mode:"):
+        return None
+
+    total = 0
+    covered = 0
+    for line in lines[1:]:
+        # "<file>:<range> <statements> <count>" — the file name may contain spaces
+        parts = line.rsplit(" ", 2)
+        if len(parts) != 3 or ":" not in parts[0]:
+            continue
+        try:
+            statements = int(parts[1])
+            count = int(parts[2])
+        except ValueError:
+            continue
+        total += statements
+        if count > 0:
+            covered += statements
+
+    if total == 0:
+        return None
+
+    return CoverageResult(
+        line_pct=round(covered / total * 100.0, 2),
+        branch_pct=None,
+        source_file=str(path),
+        format="gocover",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public: parse one file
 # ---------------------------------------------------------------------------
@@ -420,6 +473,8 @@ def read_coverage_file(path: Path) -> Optional[CoverageResult]:
             return _read_istanbul(path)
         if fmt == "lcov":
             return _read_lcov(path)
+        if fmt == "gocover":
+            return _read_gocover(path)
         # Unknown format: not a crash, just None
         return None
     except Exception:  # noqa: BLE001 – never crash on a file
