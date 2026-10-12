@@ -458,3 +458,43 @@ def test_malformed_languages_toml_prints_single_error_line():
         assert error_lines[0].startswith("ERROR:")
     finally:
         bad_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Cycle 13: unknown --steps name → exit 2, one-line ERROR, before --dry-run
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_step_exits_2_even_with_dry_run():
+    # An empty folder would exit 3; exit 2 proves the check runs before scanning.
+    with tempfile.TemporaryDirectory() as tmp:
+        result = run("--path", tmp, "--dry-run", "--steps", "build,bogus")
+    assert result.returncode == 2
+
+
+def test_unknown_step_prints_named_error_to_stderr():
+    with tempfile.TemporaryDirectory() as tmp:
+        result = run("--path", tmp, "--steps", "build,bogus")
+    assert "ERROR: unknown step: bogus" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# Cycle 14: --tail-lines below 1 → exit 2, one-line ERROR, no traceback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_value", ["0", "-5"])
+def test_tail_lines_below_one_rejected_with_one_error_line(bad_value):
+    with tempfile.TemporaryDirectory() as tmp:
+        result = run("--path", tmp, f"--tail-lines={bad_value}")
+    assert result.returncode == 2
+    error_lines = [
+        l
+        for l in result.stderr.splitlines()
+        if l.strip() and not l.startswith("NOTICE")
+    ]
+    assert len(error_lines) == 1, f"Expected 1 error line, got:\n{result.stderr}"
+    assert error_lines[0].startswith("ERROR:")
+    assert "Traceback" not in result.stderr

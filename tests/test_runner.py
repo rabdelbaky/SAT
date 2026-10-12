@@ -380,3 +380,158 @@ def test_command_result_has_all_fields(tmp_path):
     assert hasattr(result, "duration_s")
     assert hasattr(result, "output")
     assert hasattr(result, "output_tail")
+
+
+# ===========================================================================
+# Cycle 13 — Ctrl+C: KeyboardInterrupt propagates out of run_command and the
+# orchestrator turns it into an interrupted run with exit code 130 (SPEC §8, §9)
+# ===========================================================================
+
+# The child sends SIGINT to its parent (the test process), which is exactly
+# what a user pressing Ctrl+C does to the main thread, then sleeps so the
+# parent is still waiting on it when the signal lands.
+_SIGINT_PARENT_SCRIPT = (
+    "import os, signal, time; os.kill(os.getppid(), signal.SIGINT); time.sleep(30)"
+)
+
+_posix_only = pytest.mark.skipif(
+    sys.platform == "win32", reason="SIGINT to parent is POSIX-only"
+)
+
+
+@_posix_only
+def test_ctrl_c_during_command_reraises_keyboard_interrupt(tmp_path):
+    with pytest.raises(KeyboardInterrupt):
+        _run([_PY, "-c", _SIGINT_PARENT_SCRIPT], timeout_s=20.0, tmp_path=tmp_path)
+
+
+def _single_project_run(tmp_path, command: list[str], stage: str = "tests"):
+    """Run one stub project through run_all; return (results, was_interrupted)."""
+    from detection import DetectionResult, StageCommand
+    from discovery import Project
+    from orchestrator import OrchestratorOptions, run_all
+
+    repo_root = tmp_path.resolve()
+    project_dir = repo_root / "app"
+    project_dir.mkdir()
+    project = Project(path=project_dir, language="stub", primary_build_file="x")
+
+    def detect(_project, _lang_cfg):
+        return DetectionResult(
+            commands={stage: [StageCommand(command=command, source="override")]}
+        )
+
+    return run_all(
+        projects=[project],
+        languages={"stub": {"stages": [stage]}},
+        detection_fn=detect,
+        override_map={},
+        opts=OrchestratorOptions(steps=[stage], timeout_tests=20.0),
+        repo_root=repo_root,
+    )
+
+
+@_posix_only
+def test_ctrl_c_inside_run_command_gives_exit_code_130(tmp_path):
+    from orchestrator import compute_exit_code
+
+    results, was_interrupted = _single_project_run(
+        tmp_path, [_PY, "-c", _SIGINT_PARENT_SCRIPT]
+    )
+
+    assert was_interrupted is True
+    assert compute_exit_code(results, was_interrupted) == 130
+    assert results[0].stage_status("tests") == "interrupted"
+
+
+# ===========================================================================
+# Cycle 14 — tool_not_installed reaches the stage and the warnings (SPEC §3.6)
+# ===========================================================================
+
+
+def test_missing_tool_marks_stage_tool_not_installed_not_pass(tmp_path):
+    results, _ = _single_project_run(tmp_path, ["__no_such_tool_xyz_abc__"])
+
+    assert results[0].stage_status("tests") == "tool_not_installed"
+
+
+def test_missing_tool_adds_tool_not_installed_warning_once(tmp_path):
+    from detection import DetectionResult, StageCommand
+    from discovery import Project
+    from orchestrator import OrchestratorOptions, run_all
+
+    repo_root = tmp_path.resolve()
+    project = Project(path=repo_root, language="stub", primary_build_file="x")
+    missing = [
+        StageCommand(command=["__no_such_tool_one__"], source="override"),
+        StageCommand(command=["__no_such_tool_two__"], source="override"),
+    ]
+
+    results, _ = run_all(
+        projects=[project],
+        languages={"stub": {"stages": ["tests"]}},
+        detection_fn=lambda _p, _c: DetectionResult(commands={"tests": missing}),
+        override_map={},
+        opts=OrchestratorOptions(steps=["tests"]),
+        repo_root=repo_root,
+    )
+
+    assert results[0].warnings.count("tool_not_installed") == 1
+
+
+# ===========================================================================
+# Cycle 15 — report log_path is repo-relative, forward slashes (SPEC §6)
+# ===========================================================================
+
+
+def test_report_log_path_is_relative_to_repo_root(tmp_path):
+    from orchestrator import project_results_to_report_data
+    from pre_llm_checks import build_report
+
+    results, _ = _single_project_run(tmp_path, [_PY, "-c", "print('ok')"])
+    repo_root = tmp_path.resolve()
+    report = build_report(
+        project_results_to_report_data(results, repo_root), repo_root, tail_lines=50
+    )
+
+    log_path = report["projects"][0]["commands"][0]["log_path"]
+    assert log_path == ".pre-llm/logs/app/tests-0.log"
+    assert (repo_root / ".pre-llm" / "logs" / "app" / "tests-0.log").is_file()
+
+
+# ===========================================================================
+# Cycle 16 — Windows: wrapper .cmd variant wins over the plain wrapper
+# ===========================================================================
+
+
+def test_resolve_executable_prefers_gradlew_cmd_on_windows(tmp_path, monkeypatch):
+    (tmp_path / "gradlew").write_text('#!/bin/sh\nexec gradle "$@"\n')
+    (tmp_path / "gradlew.cmd").write_text("@echo off\r\ngradle %*\r\n")
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    resolved = resolve_executable(["gradle", "build"], cwd=tmp_path)
+
+    assert resolved == [str(tmp_path / "gradlew.cmd"), "build"]
+
+
+# ===========================================================================
+# Cycle 17 — Popen OSError becomes a fail result, never an exception
+# ===========================================================================
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="exec bit is POSIX-only")
+def test_unlaunchable_executable_returns_fail_with_masked_error_line(tmp_path):
+    # Executable bit set (so shutil.which finds it) but not a valid program,
+    # so Popen raises OSError (Exec format error).  The secret sits in the
+    # file name so it appears in the error text.
+    secret = "supersecrettoken99"
+    bogus = tmp_path / f"TOKEN={secret}"
+    bogus.write_bytes(b"\x00\x01\x02\x03")
+    bogus.chmod(0o755)
+
+    result = _run([str(bogus)], secrets=[secret], tmp_path=tmp_path)
+
+    assert result.status == "fail"
+    assert len(result.output_tail) == 1
+    assert result.output_tail[0].strip() != ""
+    assert secret not in result.output_tail[0]
