@@ -83,7 +83,10 @@ extensions        = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"]
 build_files       = ["package.json"]
 build_priority    = ["package.json"]
 dep_folders       = ["node_modules"]
-dep_error_phrases = ["Cannot find module", "MODULE_NOT_FOUND", "npm ERR!"]
+# "npm ERR!" is deliberately absent: npm <= 10 prints it for ANY failing script,
+# which would turn a real test/lint failure into dependencies_missing.
+dep_error_phrases = ["Cannot find module", "MODULE_NOT_FOUND", "command not found",
+                     "is not recognized as an internal or external command"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage/coverage-summary.json", "coverage/lcov.info"]
 tested            = false
@@ -115,6 +118,47 @@ lint     = []
 tests    = []
 coverage = []
 
+
+# config_commands: run only when the project declares the tool with a config file
+# next to package.json.  Run through `npx --no-install` so nothing is downloaded.
+[[language.javascript.config_commands]]
+stage   = "build"
+files   = ["tsconfig.json"]
+command = "npx --no-install tsc --noEmit"
+
+[[language.javascript.config_commands]]
+stage   = "lint"
+files   = [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json",
+           ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js",
+           "eslint.config.mjs", "eslint.config.cjs"]
+command = "npx --no-install eslint ."
+
+[[language.javascript.config_commands]]
+stage   = "lint"
+files   = ["biome.json", ".biome.json"]
+command = "npx --no-install biome check ."
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+           "jest.config.cjs", "jest.config.json"]
+command = "npx --no-install jest"
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = ["vitest.config.js", "vitest.config.ts", "vitest.config.mjs"]
+command = "npx --no-install vitest run"
+
+[[language.javascript.config_commands]]
+stage   = "tests"
+files   = [".mocharc.js", ".mocharc.yaml", ".mocharc.yml", ".mocharc.json"]
+command = "npx --no-install mocha"
+
+[[language.javascript.config_commands]]
+stage   = "coverage"
+files   = ["jest.config.js", "jest.config.ts", "jest.config.mjs",
+           "jest.config.cjs", "jest.config.json"]
+command = "npx --no-install jest --coverage --coverageReporters=json-summary"
 
 [language.java]
 extensions        = [".java"]

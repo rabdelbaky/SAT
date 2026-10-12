@@ -513,3 +513,47 @@ No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool
 
 Python has no `build` line. A `pyproject.toml` that lists `pytest` or `ruff` only as a dependency
 (and has no `[tool.*]` table) detects nothing.
+
+---
+
+## js-* (Session 11)
+
+Tiny JavaScript projects that need **no `npm install`**: they use only Node built-ins. Scripts in each
+`package.json`: `build` = `node --check calc.js` (syntax check), `lint` = `node lint-check.js`
+(fails on a `debugger` statement), `test` = `node --test`. Requires `node` and `npm` on PATH.
+
+JavaScript projects are skipped as `dependencies_missing` when `node_modules` does not exist, and this
+repo does not commit `node_modules`. **Create an empty `node_modules` folder in a copy of the fixture
+before running** (`tests/manual_js_check.py` does this). Run with `--path <copy>`; the project is `.`,
+language `javascript [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `js-ok` | PASS | PASS | PASS | SKIP | 0 | |
+| `js-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `calc.js` has a syntax error; build gate skips the rest (`build_gate`) |
+| `js-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) === 6` |
+| `js-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `debugger;` in `calc.js`; lint output names `calc.js:2: no-debugger`; tests still run |
+| `js-no-tests` | PASS | PASS | SKIP | SKIP | 0 | no `test` script, no test config: tests stage skipped (`nothing_to_run`) |
+| `js-no-linter` | PASS | WARN | PASS | SKIP | 0 | no `lint` script, no lint config: `no_linter_configured` |
+
+Report checks: `js-no-linter` lint entry has `status: "no_linter_configured"`; `js-build-fail` build entry is `fail`
+and its lint/tests/coverage entries have `reason: "build_gate"`; `js-lint-fail` lint `output_tail` names `calc.js`.
+
+### js-detect
+
+No scripts. `package.json` is bare; `eslint.config.js`, `jest.config.js` and `tsconfig.json` declare the tools.
+Nothing is installed or run: check with `--dry-run`. Expected lines after the project line (they go through
+`npx --no-install`, so nothing is ever downloaded):
+
+```
+  build: npx --no-install tsc --noEmit  [config]
+  lint: npx --no-install eslint .  [config]
+  tests: npx --no-install jest  [config]
+  coverage: npx --no-install jest --coverage --coverageReporters=json-summary  [config]
+```
+
+A `package.json` that lists `eslint`, `jest` or `typescript` only under `devDependencies` detects nothing
+(see `devdeps-only`).
+
+TypeScript note: TS projects are the same `javascript` language entry. `tsconfig.json` is detected as a
+build (type-check) command; there is no separate TS fixture yet.

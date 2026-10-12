@@ -1,0 +1,8 @@
+{
+  "name": "js-no-linter",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node --check calc.js",
+    "test": "node --test"
+  }
+}

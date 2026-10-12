@@ -1,0 +1,9 @@
+{
+  "name": "js-test-fail",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node --check calc.js",
+    "lint": "node lint-check.js",
+    "test": "node --test"
+  }
+}
