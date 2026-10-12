@@ -444,6 +444,17 @@ def _timeout_type(name: str):
     return _parse
 
 
+def _positive_int(value: str) -> int:
+    """argparse *type* for --tail-lines: an integer of at least 1."""
+    try:
+        n = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an integer: {value!r}") from exc
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {n}")
+    return n
+
+
 def build_parser() -> _ExitingParser:
     parser = _ExitingParser(
         prog="pre-llm-checks",
@@ -490,10 +501,13 @@ def build_parser() -> _ExitingParser:
         default=900,
         metavar="DURATION",
     )
-    parser.add_argument("--tail-lines", type=int, default=50)
+    parser.add_argument("--tail-lines", type=_positive_int, default=50)
     parser.add_argument("--config", default="pre-llm.toml")
     parser.add_argument("--add-gitignore", action="store_true")
     return parser
+
+
+_VALID_STEPS = ("build", "lint", "tests", "coverage")
 
 
 def _validate_path(path: Path) -> str | None:
@@ -510,6 +524,13 @@ def _validate_path(path: Path) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Parse requested steps; reject unknown names before doing anything else.
+    steps = [s.strip() for s in args.steps.split(",") if s.strip()]
+    for step in steps:
+        if step not in _VALID_STEPS:
+            print(f"ERROR: unknown step: {step}", file=sys.stderr)
+            return 2
 
     root = Path(args.path).resolve()
 
@@ -565,9 +586,6 @@ def main(argv: list[str] | None = None) -> int:
         _print_dry_run(projects, languages, override_map)
         return 0
 
-    # Parse requested steps
-    steps = [s.strip() for s in args.steps.split(",") if s.strip()]
-
     orch_opts = OrchestratorOptions(
         steps=steps,
         lint_anyway=args.lint_anyway,
@@ -584,10 +602,10 @@ def main(argv: list[str] | None = None) -> int:
     if not output_path.is_absolute():
         output_path = Path.cwd() / output_path
 
-    # Logs and .pre-llm live in the current working directory, not inside
-    # the scanned folder (which may be read-only or a fixture under test).
-    pre_llm_dir = Path.cwd() / ".pre-llm"
-    gitignore_path = Path.cwd() / ".gitignore"
+    # Logs live in <repo root>/.pre-llm/logs/ (SPEC §6); the .gitignore that
+    # must cover them is the repo root's.
+    pre_llm_dir = root / ".pre-llm"
+    gitignore_path = root / ".gitignore"
     if not gitignore_path.exists():
         print(
             "WARNING: .gitignore missing — logs will not be gitignored.",

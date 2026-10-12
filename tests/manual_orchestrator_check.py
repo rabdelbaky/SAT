@@ -518,14 +518,17 @@ def run_checks() -> int:
         )
 
         # ------------------------------------------------------------------
-        # Check 23: executed commands have a non-empty log_path
+        # Check 23: executed commands have a relative, in-repo log_path
         # ------------------------------------------------------------------
         has_log_path = bool(executed_cmds) and all(
-            cmd.get("log_path") for cmd in executed_cmds
+            cmd.get("log_path")
+            and cmd.get("log_path") != "<external>"
+            and not Path(cmd["log_path"]).is_absolute()
+            for cmd in executed_cmds
         )
         _check(
             23,
-            "executed commands all have a log_path",
+            "executed commands all have a relative log_path (not <external>)",
             ok=has_log_path,
             detail=f"log_paths={[c.get('log_path') for c in executed_cmds]}",
         )

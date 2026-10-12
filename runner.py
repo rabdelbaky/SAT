@@ -18,8 +18,10 @@ run_command(args, cwd, timeout_s, log_path, tail_lines, secrets) -> CommandResul
       pass              — exited 0
       fail              — exited non-zero
       timeout           — killed after timeout_s
-      interrupted       — killed by KeyboardInterrupt (Ctrl+C)
       tool_not_installed — executable not found via shutil.which
+
+    On KeyboardInterrupt (Ctrl+C) the tree is killed and the exception is
+    re-raised; no result is returned.
 
     The whole process tree is killed on timeout or Ctrl+C so no orphan
     processes are left behind (POSIX: new session + killpg; Windows:
@@ -190,14 +192,14 @@ def resolve_executable(args: list[str], cwd: Path) -> list[str] | None:
         candidate_lower = candidate.lower()
         wrapper_name = _WRAPPER_MAP.get(candidate_lower) or _WRAPPER_MAP.get(candidate)
         if wrapper_name:
-            wrapper_path = cwd / wrapper_name
-            if wrapper_path.exists():
-                return [str(wrapper_path)] + args[1:]
-            # Also check .cmd variant on Windows
-            if sys.platform == "win32":
+            # On Windows the .cmd variant comes first (SPEC §3.6)
+            if sys.platform == "win32" and not wrapper_name.endswith(".cmd"):
                 wrapper_cmd = cwd / (wrapper_name + ".cmd")
                 if wrapper_cmd.exists():
                     return [str(wrapper_cmd)] + args[1:]
+            wrapper_path = cwd / wrapper_name
+            if wrapper_path.exists():
+                return [str(wrapper_path)] + args[1:]
 
     # No wrapper found; resolve via shutil.which
     resolved = shutil.which(exe)
@@ -231,8 +233,8 @@ def run_command(
 
     On timeout the whole process tree is killed and ``status="timeout"``
     is returned.  On :exc:`KeyboardInterrupt` the whole process tree is
-    killed and ``status="interrupted"`` is returned, allowing the caller
-    to still write a report.
+    killed, the log is closed, and the :exc:`KeyboardInterrupt` is re-raised
+    so the caller can mark the run interrupted and still write a report.
     """
     if secrets is None:
         secrets = []
@@ -286,7 +288,20 @@ def run_command(
 
     try:
         log_fh = open(log_path, "w", encoding="utf-8", errors="replace")
-        proc = subprocess.Popen(**kwargs)  # type: ignore[call-overload]
+        try:
+            proc = subprocess.Popen(**kwargs)  # type: ignore[call-overload]
+        except OSError as exc:
+            # Found but could not be launched (bad format, permissions, ...):
+            # a fail whose only output line is the error text.
+            error_line = str(exc)
+            log_fh.write(_mask(error_line, secrets) + "\n")
+            return CommandResult(
+                status="fail",
+                exit_code=None,
+                duration_s=time.monotonic() - start,
+                output=error_line,
+                output_tail=_build_tail([error_line], tail_lines, secrets),
+            )
 
         reader_thread = threading.Thread(
             target=_reader,
@@ -311,8 +326,9 @@ def run_command(
         reader_thread.join(timeout=5.0)
 
     except KeyboardInterrupt:
-        # Ctrl+C: kill the process tree, drain remaining output, then return
-        # interrupted result.  The caller is responsible for exiting with 130.
+        # Ctrl+C: kill the process tree, drain remaining output, then re-raise
+        # (the finally block closes the log first).  The orchestrator catches
+        # it, marks the command interrupted, and the caller exits with 130.
         if proc is not None:
             _kill_tree(proc.pid)
             try:
@@ -321,11 +337,7 @@ def run_command(
                 pass
         if reader_thread is not None:
             reader_thread.join(timeout=5.0)
-        status = "interrupted"
-        exit_code = None
-        # Fall through to build and RETURN the result (do NOT re-raise here).
-        # The caller sees status="interrupted" and can write the report, then
-        # raise SystemExit(130) itself.
+        raise
 
     finally:
         if log_fh is not None:

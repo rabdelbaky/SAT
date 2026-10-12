@@ -243,6 +243,20 @@ def test_timeout_and_interrupt_get_detail_lines(tmp_path):
     assert out.rstrip().endswith("Summary: 1 project: 0 passed, 0 with warnings, 1 failed (interrupted)")
 
 
+def test_detail_log_path_is_relative_to_repo_root(tmp_path):
+    absolute_log = str(tmp_path / ".pre-llm" / "logs" / "app" / "tests-0.log")
+    p = _project(
+        tmp_path,
+        "app",
+        "python",
+        True,
+        [_stage("tests", "fail", command=["pytest"], log=absolute_log)],
+    )
+    out = render_terminal([p], tmp_path)
+    assert "(log: .pre-llm/logs/app/tests-0.log)" in out
+    assert str(tmp_path) not in out
+
+
 def test_tool_not_installed_detail_names_the_tool(tmp_path):
     p = _project(
         tmp_path,
@@ -420,6 +434,39 @@ def test_environment_runner_name_strips_path_and_windows_suffix(tmp_path):
     )
     env = collect_environment([p], _fake_versions({}), os_name="x")
     assert sorted(env["runners"]) == ["mvnw", "python3.11"]
+
+
+def test_environment_never_probes_project_scripts_or_wrappers(tmp_path):
+    p = _project(
+        tmp_path,
+        "a",
+        "java",
+        True,
+        [
+            _stage("build", command=["./check.sh", "x"]),
+            _stage("lint", command=["scripts\\run.bat"]),
+            _stage("tests", command=["gradlew", "build"]),
+            _stage("coverage", command=["mvnw.cmd", "verify"]),
+        ],
+    )
+    q = _project(tmp_path, "b", "python", True, [_stage("tests", command=["python", "-c", "pass"])])
+    probed: list[str] = []
+
+    def version_fn(exe, cwd):
+        probed.append(exe)
+        return "v1"
+
+    runners = collect_environment([p, q], version_fn, os_name="x")["runners"]
+
+    assert probed == ["python"]
+    assert runners["python"] == "v1"
+    others = {name: v for name, v in runners.items() if name != "python"}
+    assert others == {
+        "check.sh": "unknown",
+        "run": "unknown",
+        "gradlew": "unknown",
+        "mvnw": "unknown",
+    }
 
 
 def test_environment_default_os_name_is_non_empty(tmp_path):
