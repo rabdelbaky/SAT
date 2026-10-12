@@ -165,7 +165,8 @@ extensions        = [".java"]
 build_files       = ["pom.xml", "build.gradle", "build.gradle.kts"]
 build_priority    = ["pom.xml", "build.gradle", "build.gradle.kts"]
 dep_folders       = []
-dep_error_phrases = ["Could not resolve", "BUILD FAILURE"]
+# "BUILD FAILURE" is deliberately absent: Maven prints it for ANY failed build.
+dep_error_phrases = ["Could not resolve", "Could not find artifact", "Non-resolvable parent POM"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["target/site/jacoco/jacoco.xml"]
 tested            = false
@@ -262,7 +263,8 @@ extensions        = [".kt", ".kts"]
 build_files       = ["build.gradle", "build.gradle.kts"]
 build_priority    = ["build.gradle.kts", "build.gradle"]
 dep_folders       = []
-dep_error_phrases = ["Could not resolve", "BUILD FAILURE"]
+# "BUILD FAILURE" is deliberately absent: Maven prints it for ANY failed build.
+dep_error_phrases = ["Could not resolve", "Could not find artifact", "Non-resolvable parent POM"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["build/reports/jacoco/test/jacocoTestReport.xml"]
 tested            = false
@@ -392,7 +394,10 @@ extensions        = [".rs"]
 build_files       = ["Cargo.toml"]
 build_priority    = ["Cargo.toml"]
 dep_folders       = []
-dep_error_phrases = ["error[E", "could not compile"]
+# Only genuinely-missing-dependency messages: "could not compile" / "error[E" appear for ANY
+# rustc error and would turn real build failures into dependencies_missing.
+dep_error_phrases = ["no matching package", "failed to select a version", "failed to download",
+                     "failed to get `"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["cobertura.xml", "lcov.info"]
 tested            = false
@@ -408,12 +413,20 @@ lint     = [".clippy.toml", "clippy.toml"]
 tests    = []
 coverage = ["tarpaulin.toml"]
 
+# cargo build / clippy / test ship with the toolchain.  Coverage does not: `cargo tarpaulin`
+# is a separate install, so it runs only when the project declares it (config_commands).
 [language.rust.builtin_phases]
 build    = ["cargo build", "cargo build --release"]
 lint     = ["cargo clippy", "cargo clippy -- -D warnings",
             "cargo fmt --check", "cargo fmt -- --check"]
 tests    = ["cargo test"]
-coverage = ["cargo tarpaulin", "cargo llvm-cov"]
+coverage = []
+
+[[language.rust.config_commands]]
+stage               = "coverage"
+files               = ["tarpaulin.toml", ".tarpaulin.toml"]
+build_file_contains = ["[package.metadata.tarpaulin"]
+command             = "cargo tarpaulin --out Xml"
 
 
 [language.php]
