@@ -31,8 +31,16 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
 - Dependency check (data-driven from languages.toml):
     dep_folders: optional folder check; if any folder is absent, all stages
         are skipped with status="skipped", reason="dependencies_missing".
+    dep_declared_keys: the folder check is skipped when the JSON build file
+        declares no packages in any of these keys (nothing to install).
     dep_error_phrases: phrases in a failed command's output that turn
         status="fail" into status="dependencies_missing" (warning, not fail).
+    dep_error_patterns: optional regexes (re.MULTILINE), same effect as phrases.
+- No tests found (data-driven): a tests stage that passed is marked
+  status="skipped", reason="no_tests_found" (its commands too) when the full
+  log matches one of lang_cfg["no_tests_patterns"] and none of
+  lang_cfg["tests_ran_patterns"] (regexes, re.MULTILINE).  E.g. Maven
+  "No tests to run." with no "Tests run: N" line.  The table shows SKIP.
 - Per-stage timeouts from opts (build 10m, lint 5m, tests 15m, coverage 15m).
 - Each command result: status, duration_s, output_tail, log_path, findings=null.
 - On KeyboardInterrupt: mark current command interrupted, set result.interrupted=True,
@@ -49,6 +57,8 @@ Cross-platform: Python 3.11+, no third-party packages.
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,7 +67,7 @@ from typing import Callable, Optional
 from coverage_readers import CoverageData, read_project_coverage
 from detection import DetectionResult, StageCommand
 from discovery import Project
-from runner import run_command, CommandResult
+from runner import displayed_command, run_command, CommandResult
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +117,7 @@ class CommandRecord:
     # skipped | no_linter_configured | dependencies_missing
     duration_s: float
     output_tail: list[str]
-    log_path: Optional[str]  # relative forward-slash path, or None
+    log_path: Optional[str]  # absolute path (build_report relativises it), or None
     findings: None = None  # v1: always null
 
 
@@ -185,12 +195,74 @@ def _log_path(log_dir: Path, slug: str, stage: str, n: int) -> Path:
     return log_dir / slug / f"{stage}-{n}.log"
 
 
-def _matches_dep_error(output: str, phrases: list[str]) -> bool:
-    """Return True if *output* contains any phrase from *phrases*."""
+def _matches_dep_error(
+    output: str, phrases: list[str], patterns: list[str] | None = None
+) -> bool:
+    """Return True if *output* contains any phrase or matches any regex pattern.
+
+    Patterns use re.MULTILINE; an invalid pattern is skipped.
+    """
     for phrase in phrases:
         if phrase in output:
             return True
+    for pattern in patterns or []:
+        try:
+            if re.search(pattern, output, re.MULTILINE):
+                return True
+        except re.error:
+            continue
     return False
+
+
+def _ran_no_tests(
+    records: list[CommandRecord], no_tests: list[str], ran: list[str]
+) -> bool:
+    """Return True if the passed tests commands ran no test at all.
+
+    Reads each command's full log (masked; falls back to output_tail), so a
+    "Tests run: N" line far above the tail still counts.  A pattern that
+    raises re.error is skipped.
+    """
+    if not no_tests or not records:
+        return False
+    texts = []
+    for rec in records:
+        text = None
+        if rec.log_path:
+            try:
+                text = Path(rec.log_path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = None
+        texts.append(text if text is not None else "\n".join(rec.output_tail))
+    full = "\n".join(texts)
+
+    def _any(patterns: list[str]) -> bool:
+        for pattern in patterns:
+            try:
+                if re.search(pattern, full, re.MULTILINE):
+                    return True
+            except re.error:
+                continue
+        return False
+
+    return _any(no_tests) and not _any(ran)
+
+
+def _declares_no_dependencies(project: Project, keys: list[str]) -> bool:
+    """Return True if the JSON build file declares no packages in any of *keys*.
+
+    False when *keys* is empty or the build file cannot be read as a JSON object.
+    """
+    if not keys:
+        return False
+    try:
+        with open(project.path / project.primary_build_file, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return not any(isinstance(data.get(k), dict) and data.get(k) for k in keys)
 
 
 def _all_commands_from_overrides(detection: DetectionResult, stages: list[str]) -> bool:
@@ -253,13 +325,15 @@ def _run_one(
     )
 
     return CommandRecord(
-        command=cmd.command,
+        # mvn/gradle show as the wrapper that really ran (mvnw, gradlew.bat).
+        command=displayed_command(cmd.command, cwd),
         source=cmd.source,
         stage=stage,
         status=result.status,
         duration_s=result.duration_s,
         output_tail=result.output_tail,
-        log_path=_relative_path(log_path, repo_root),
+        # Absolute path; build_report makes it repo-relative with forward slashes.
+        log_path=str(log_path.absolute()),
         findings=None,
     )
 
@@ -299,6 +373,10 @@ def run_project(
     )
     dep_folders: list[str] = lang_cfg.get("dep_folders", [])
     dep_error_phrases: list[str] = lang_cfg.get("dep_error_phrases", [])
+    dep_error_patterns: list[str] = lang_cfg.get("dep_error_patterns", [])
+    no_tests_patterns: list[str] = lang_cfg.get("no_tests_patterns", [])
+    tests_ran_patterns: list[str] = lang_cfg.get("tests_ran_patterns", [])
+    dep_declared_keys: list[str] = lang_cfg.get("dep_declared_keys", [])
 
     # Filter to only the requested steps
     active_stages = [s for s in stages_order if s in opts.steps]
@@ -319,12 +397,14 @@ def run_project(
     # Only runs when:
     #   (a) the language declares dep_folders (non-empty list), AND
     #   (b) not ALL active commands come from pre-llm.toml overrides
-    #       (overrides bypass the folder check by design).
+    #       (overrides bypass the folder check by design), AND
+    #   (c) the build file declares at least one package (dep_declared_keys).
     # A missing folder means deps are not installed; all stages are skipped.
     if (
         dep_folders
         and active_stages
         and not _all_commands_from_overrides(detection, active_stages)
+        and not _declares_no_dependencies(project, dep_declared_keys)
     ):
         found_dep_folder = any((project.path / f).is_dir() for f in dep_folders)
         if not found_dep_folder:
@@ -407,13 +487,21 @@ def run_project(
                 return result  # caller checks .interrupted
 
             # --- dep_error_phrases post-processing --------------------
-            if record.status == "fail" and dep_error_phrases:
+            if record.status == "fail" and (dep_error_phrases or dep_error_patterns):
                 full_output = "\n".join(record.output_tail)
-                if _matches_dep_error(full_output, dep_error_phrases):
+                if _matches_dep_error(full_output, dep_error_phrases, dep_error_patterns):
                     record.status = "dependencies_missing"
-                    result.warnings.append("dependencies_missing")
+                    if "dependencies_missing" not in result.warnings:
+                        result.warnings.append("dependencies_missing")
 
             stage_result.commands.append(record)
+
+            # --- tool_not_installed: warning, never a pass -------------
+            if record.status == "tool_not_installed":
+                if stage_result.status not in ("fail", "timeout"):
+                    stage_result.status = "tool_not_installed"
+                if "tool_not_installed" not in result.warnings:
+                    result.warnings.append("tool_not_installed")
 
             # Worst-wins for the stage
             if record.status in (
@@ -429,8 +517,22 @@ def run_project(
                 elif record.status == "interrupted":
                     stage_result.status = "interrupted"
 
+        # --- Tests that ran no test: SKIP, not a vacuous PASS --------
+        if (
+            stage == "tests"
+            and stage_result.status == "pass"
+            and _ran_no_tests(stage_result.commands, no_tests_patterns, tests_ran_patterns)
+        ):
+            for rec in stage_result.commands:
+                rec.status = "skipped"
+            stage_result.status = "skipped"
+            stage_result.reason = "no_tests_found"
+
         # --- Coverage file reading (Session 8) -----------------------
-        if stage == "coverage":
+        if stage == "coverage" and stage_result.status not in (
+            "dependencies_missing",
+            "tool_not_installed",
+        ):
             coverage_files: list[str] = lang_cfg.get("coverage_files", [])
             output_texts = ["\n".join(rec.output_tail) for rec in stage_result.commands]
             cov_data = read_project_coverage(
@@ -604,6 +706,7 @@ def project_results_to_report_data(
                             "log_path": rec.log_path,
                             "findings": rec.findings,
                             "stage": rec.stage,
+                            "reason": stage_result.reason,
                         }
                     )
             else:

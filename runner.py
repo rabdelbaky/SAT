@@ -4,11 +4,16 @@ Public API
 ----------
 resolve_executable(args, cwd) -> list[str] | None
     Resolve the first element of *args* to a real path:
-      1. If the command is mvn/gradle (or mvn.cmd/gradle.cmd on Windows),
-         look for mvnw/gradlew (or mvnw.cmd/gradlew.cmd) in *cwd* first.
+      1. If the command is mvn/gradle, a wrapper in *cwd* wins: mvnw/gradlew
+         on POSIX (run with sh if not executable), mvnw.cmd/gradlew.bat
+         (or gradlew.cmd) on Windows.
       2. Use shutil.which to locate the executable on PATH.
       3. Return None if the executable cannot be found (caller maps to
          tool_not_installed).
+
+displayed_command(args, cwd) -> list[str]
+    *args* with mvn/gradle replaced by the wrapper's file name when a
+    wrapper will run (for the report; never a path).
 
 run_command(args, cwd, timeout_s, log_path, tail_lines, secrets) -> CommandResult
     Run *args* as a subprocess with shell=False, stream combined
@@ -18,8 +23,10 @@ run_command(args, cwd, timeout_s, log_path, tail_lines, secrets) -> CommandResul
       pass              — exited 0
       fail              — exited non-zero
       timeout           — killed after timeout_s
-      interrupted       — killed by KeyboardInterrupt (Ctrl+C)
       tool_not_installed — executable not found via shutil.which
+
+    On KeyboardInterrupt (Ctrl+C) the tree is killed and the exception is
+    re-raised; no result is returned.
 
     The whole process tree is killed on timeout or Ctrl+C so no orphan
     processes are left behind (POSIX: new session + killpg; Windows:
@@ -50,12 +57,11 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 _MAX_LINE_LEN: int = 500
-_WRAPPER_MAP: dict[str, str] = {
-    "mvn": "mvnw",
-    "gradle": "gradlew",
-    # .cmd variants (Windows)
-    "mvn.cmd": "mvnw.cmd",
-    "gradle.cmd": "gradlew.cmd",
+# Build tool -> (POSIX wrapper script, Windows wrapper scripts in order).
+# Gradle's Windows wrapper is gradlew.bat; Maven's is mvnw.cmd.
+_WRAPPERS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "mvn": ("mvnw", ("mvnw.cmd",)),
+    "gradle": ("gradlew", ("gradlew.bat", "gradlew.cmd")),
 }
 
 # ---------------------------------------------------------------------------
@@ -165,39 +171,69 @@ def _kill_tree(pid: int) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _find_wrapper(exe: str, cwd: Path) -> list[str] | None:
+    """Return the argv prefix for a mvnw/gradlew wrapper in *cwd*, or None.
+
+    Windows: only the .cmd/.bat wrapper is used; the extensionless POSIX
+    script cannot be launched there, so without a .cmd/.bat the build tool
+    on PATH is used instead.  POSIX: a wrapper without the executable bit
+    (common after a zip download) is run with ``sh``.
+    """
+    name = Path(exe).name.lower()
+    for suffix in (".cmd", ".bat", ".exe"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    entry = _WRAPPERS.get(name)
+    if entry is None:
+        return None
+    posix_name, windows_names = entry
+    if sys.platform == "win32":
+        for win_name in windows_names:
+            path = cwd / win_name
+            if path.is_file():
+                return [str(path)]
+        return None
+    path = cwd / posix_name
+    if not path.is_file():
+        return None
+    if os.access(path, os.X_OK):
+        return [str(path)]
+    sh = shutil.which("sh")
+    return [sh, str(path)] if sh else None
+
+
+def displayed_command(args: list[str], cwd: Path) -> list[str]:
+    """Return *args* as the report shows them: the wrapper's file name in
+    place of mvn/gradle when :func:`_find_wrapper` would use one (e.g.
+    ``["gradlew.bat", "assemble"]``), else *args* unchanged.  Never a path,
+    so the report stays relative and the environment block never probes the
+    PATH tool for a run the wrapper did.
+    """
+    if not args:
+        return args
+    wrapper = _find_wrapper(args[0], cwd)
+    if wrapper is None:
+        return args
+    return [Path(wrapper[-1]).name] + args[1:]
+
+
 def resolve_executable(args: list[str], cwd: Path) -> list[str] | None:
     """Resolve the executable in *args* and return the updated argument list.
 
     Returns ``None`` if the executable cannot be found (caller should set
     status ``tool_not_installed``).
 
-    Wrapper preference: if the command is ``mvn`` or ``gradle`` (or their
-    ``.cmd`` variants on Windows), look for ``mvnw`` / ``gradlew`` (or
-    ``.cmd`` variants) in *cwd* first.
+    Wrapper preference: if the command is ``mvn`` or ``gradle``, a wrapper
+    in *cwd* wins (see :func:`_find_wrapper`).
     """
     if not args:
         return None
 
     exe = args[0]
-    exe_basename = Path(exe).name  # strip any path prefix for lookup
-
-    # On Windows, also consider the .cmd variant when checking wrappers
-    candidates: list[str] = [exe_basename]
-    if sys.platform == "win32" and not exe_basename.lower().endswith(".cmd"):
-        candidates.append(exe_basename + ".cmd")
-
-    for candidate in candidates:
-        candidate_lower = candidate.lower()
-        wrapper_name = _WRAPPER_MAP.get(candidate_lower) or _WRAPPER_MAP.get(candidate)
-        if wrapper_name:
-            wrapper_path = cwd / wrapper_name
-            if wrapper_path.exists():
-                return [str(wrapper_path)] + args[1:]
-            # Also check .cmd variant on Windows
-            if sys.platform == "win32":
-                wrapper_cmd = cwd / (wrapper_name + ".cmd")
-                if wrapper_cmd.exists():
-                    return [str(wrapper_cmd)] + args[1:]
+    wrapper = _find_wrapper(exe, cwd)
+    if wrapper is not None:
+        return wrapper + args[1:]
 
     # No wrapper found; resolve via shutil.which
     resolved = shutil.which(exe)
@@ -231,8 +267,8 @@ def run_command(
 
     On timeout the whole process tree is killed and ``status="timeout"``
     is returned.  On :exc:`KeyboardInterrupt` the whole process tree is
-    killed and ``status="interrupted"`` is returned, allowing the caller
-    to still write a report.
+    killed, the log is closed, and the :exc:`KeyboardInterrupt` is re-raised
+    so the caller can mark the run interrupted and still write a report.
     """
     if secrets is None:
         secrets = []
@@ -286,7 +322,20 @@ def run_command(
 
     try:
         log_fh = open(log_path, "w", encoding="utf-8", errors="replace")
-        proc = subprocess.Popen(**kwargs)  # type: ignore[call-overload]
+        try:
+            proc = subprocess.Popen(**kwargs)  # type: ignore[call-overload]
+        except OSError as exc:
+            # Found but could not be launched (bad format, permissions, ...):
+            # a fail whose only output line is the error text.
+            error_line = str(exc)
+            log_fh.write(_mask(error_line, secrets) + "\n")
+            return CommandResult(
+                status="fail",
+                exit_code=None,
+                duration_s=time.monotonic() - start,
+                output=error_line,
+                output_tail=_build_tail([error_line], tail_lines, secrets),
+            )
 
         reader_thread = threading.Thread(
             target=_reader,
@@ -311,8 +360,9 @@ def run_command(
         reader_thread.join(timeout=5.0)
 
     except KeyboardInterrupt:
-        # Ctrl+C: kill the process tree, drain remaining output, then return
-        # interrupted result.  The caller is responsible for exiting with 130.
+        # Ctrl+C: kill the process tree, drain remaining output, then re-raise
+        # (the finally block closes the log first).  The orchestrator catches
+        # it, marks the command interrupted, and the caller exits with 130.
         if proc is not None:
             _kill_tree(proc.pid)
             try:
@@ -321,11 +371,7 @@ def run_command(
                 pass
         if reader_thread is not None:
             reader_thread.join(timeout=5.0)
-        status = "interrupted"
-        exit_code = None
-        # Fall through to build and RETURN the result (do NOT re-raise here).
-        # The caller sees status="interrupted" and can write the report, then
-        # raise SystemExit(130) itself.
+        raise
 
     finally:
         if log_fh is not None:

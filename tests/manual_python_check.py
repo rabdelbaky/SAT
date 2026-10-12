@@ -9,6 +9,9 @@ the python-* section of tests/fixtures/EXPECTED.md.  python-detect is checked
 with --dry-run (nothing is installed or executed).
 
 Needs `python` on PATH (the fixtures' pre-llm.toml files call it).
+python-ok and python-test-fail also need `pytest` on PATH: their tests
+command is the detected `pytest` (from [tool.pytest.ini_options]).
+python-detect-ini is checked with --dry-run only.
 Exit code: 0 if all checks pass, 1 if any fail.
 """
 
@@ -87,9 +90,11 @@ def run_checks() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         reports = {}
+        outputs = {}
         for name, (b, li, t, c, want_exit) in _EXPECTED.items():
             code, out, err, rep = _run(name, tmp)
             reports[name] = rep
+            outputs[name] = out
             n += 1
             _check(
                 n,
@@ -125,6 +130,22 @@ def run_checks() -> int:
             ok=entry.get("status") == "fail",
             detail=f"entry={entry}",
         )
+        for name in ("python-ok", "python-test-fail"):
+            entry = _stage_entry(reports[name], "tests")
+            n += 1
+            _check(
+                n,
+                f"{name}: tests entry is the detected pytest (source config)",
+                ok=entry.get("command") == ["pytest"] and entry.get("source") == "config",
+                detail=f"entry={entry}",
+            )
+        n += 1
+        _check(
+            n,
+            "python-no-linter: stdout says 'no linter configured'",
+            ok="no linter configured" in outputs["python-no-linter"],
+            detail=outputs["python-no-linter"],
+        )
 
         # --- python-detect: detection only, --dry-run ----------------------
         code, out, err, _ = _run("python-detect", tmp, ["--dry-run"])
@@ -145,6 +166,32 @@ def run_checks() -> int:
         _check(
             n,
             "python-detect: no build command is listed for Python",
+            ok=not any(ln.startswith("build:") for ln in lines),
+            detail=out,
+        )
+
+        # --- python-detect-ini: setup.cfg sections, --dry-run ----------------
+        code, out, err, _ = _run("python-detect-ini", tmp, ["--dry-run"])
+        lines = [ln.strip() for ln in out.splitlines()]
+        stage_lines = [
+            ln for ln in lines if ln.split(":", 1)[0] in ("build", "lint", "tests", "coverage")
+        ]
+        want = [
+            "lint: flake8 .  [config]",
+            "tests: pytest  [config]",
+            "coverage: pytest --cov --cov-report=xml  [config]",
+        ]
+        n += 1
+        _check(
+            n,
+            "python-detect-ini: --dry-run lists exactly flake8, pytest, pytest --cov from setup.cfg",
+            ok=stage_lines == want and code == 0,
+            detail=f"exit={code} stage_lines={stage_lines}\n{out}{err}",
+        )
+        n += 1
+        _check(
+            n,
+            "python-detect-ini: no build command is listed",
             ok=not any(ln.startswith("build:") for ln in lines),
             detail=out,
         )

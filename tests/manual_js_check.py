@@ -3,13 +3,16 @@
 Run as:
     python tests/manual_js_check.py
 
-Each js-* fixture is copied to a temp folder, an empty node_modules is created
-in the copy (JavaScript projects are skipped as dependencies_missing without
-it), and pre_llm_checks.main() is run.  The table row, exit code and report
-are compared with the js-* section of tests/fixtures/EXPECTED.md.  js-detect is
-checked with --dry-run (nothing installed or executed).
+Each js-* / ts-* fixture is copied to a temp folder and pre_llm_checks.main()
+is run.  The fixtures declare no packages, so the node_modules check does not
+apply and no node_modules folder is needed.  js-missing-deps (which declares
+left-pad) is run twice: once as is, and once with an empty node_modules (a
+half-done install).  The table row, exit code and report are compared with the
+js-* section of tests/fixtures/EXPECTED.md.  js-detect is checked with
+--dry-run (nothing installed or executed).
 
-Needs `node` and `npm` on PATH.  Exit code: 0 if all checks pass, 1 otherwise.
+Needs `node`, `npm` and `tsc` (npm install -g typescript) on PATH.
+Exit code: 0 if all checks pass, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -40,6 +43,10 @@ _EXPECTED = {
     "js-lint-fail": ("PASS", "FAIL", "PASS", "SKIP", 1),
     "js-no-tests": ("PASS", "PASS", "SKIP", "SKIP", 0),
     "js-no-linter": ("PASS", "WARN", "PASS", "SKIP", 0),
+    "js-bad-require": ("PASS", "PASS", "FAIL", "SKIP", 1),
+    "js-missing-deps": ("SKIP", "SKIP", "SKIP", "SKIP", 0),
+    "ts-ok": ("PASS", "WARN", "SKIP", "SKIP", 0),
+    "ts-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
 }
 
 
@@ -50,12 +57,19 @@ def _check(num: int, description: str, *, ok: bool, detail: str = "") -> None:
     _results.append((num, label, description))
 
 
-def _run(name: str, tmp: Path, extra: list[str] | None = None, deps: bool = True):
-    work = tmp / name
+def _run(
+    name: str,
+    tmp: Path,
+    extra: list[str] | None = None,
+    deps: bool = False,
+    copy_name: str | None = None,
+):
+    copy_name = copy_name or name
+    work = tmp / copy_name
     shutil.copytree(_FIXTURES / name, work)
     if deps:
         (work / "node_modules").mkdir()
-    report_path = tmp / f"report_{name}.json"
+    report_path = tmp / f"report_{copy_name}.json"
     argv = ["--path", str(work), "--output", str(report_path), *(extra or [])]
     out, err = io.StringIO(), io.StringIO()
     try:
@@ -89,6 +103,14 @@ def run_checks() -> int:
     n = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
+        n += 1
+        _check(
+            n,
+            "tsc is on PATH (needed by ts-ok and ts-build-fail)",
+            ok=shutil.which("tsc") is not None,
+            detail="run: npm install -g typescript   then run this check again",
+        )
+
         reports = {}
         for name, (b, li, t, c, want_exit) in _EXPECTED.items():
             code, out, err, rep = _run(name, tmp)
@@ -120,8 +142,50 @@ def run_checks() -> int:
         _check(n, "js-lint-fail: lint is fail and output names calc.js",
                ok=e.get("status") == "fail" and "calc.js" in tail, detail=f"entry={e}")
 
+        n += 1
+        e = _entry(reports["js-bad-require"], "tests")
+        tail = " ".join(e.get("output_tail") or [])
+        _check(n, "js-bad-require: tests is fail (code bug) and output names calcx",
+               ok=e.get("status") == "fail" and "calcx" in tail, detail=f"entry={e}")
+
+        n += 1
+        rep = reports["js-missing-deps"]
+        reasons = [_entry(rep, s).get("reason") or "" for s in ("build", "lint", "tests", "coverage")]
+        warnings = ((rep or {}).get("projects") or [{}])[0].get("warnings") or []
+        _check(n, "js-missing-deps: every stage skipped as dependencies_missing, project warning set",
+               ok=all(r.startswith("dependencies_missing") for r in reasons)
+               and "dependencies_missing" in warnings,
+               detail=f"reasons={reasons} warnings={warnings}")
+
+        # --- js-missing-deps with an empty node_modules (half-done install) --
+        code, out, err, rep = _run("js-missing-deps", tmp, deps=True, copy_name="js-missing-deps-nm")
+        n += 1
+        _check(n, "js-missing-deps + empty node_modules: table cells PASS WARN WARN SKIP",
+               ok=_cells(out) == ["PASS", "WARN", "WARN", "SKIP"],
+               detail=f"got {_cells(out)}\n{out}{err}")
+        n += 1
+        _check(n, "js-missing-deps + empty node_modules: exit code 0", ok=code == 0, detail=f"got {code}")
+        n += 1
+        e = _entry(rep, "tests")
+        tail = " ".join(e.get("output_tail") or [])
+        _check(n, "js-missing-deps + empty node_modules: tests is dependencies_missing naming left-pad",
+               ok=e.get("status") == "dependencies_missing" and "left-pad" in tail, detail=f"entry={e}")
+
+        n += 1
+        e = _entry(reports["ts-ok"], "build")
+        _check(n, "ts-ok: build is the detected tsc --noEmit (source config) and passes",
+               ok=e.get("command") == ["npx", "--no-install", "tsc", "--noEmit"]
+               and e.get("source") == "config" and e.get("status") == "pass",
+               detail=f"entry={e}")
+
+        n += 1
+        e = _entry(reports["ts-build-fail"], "build")
+        tail = " ".join(e.get("output_tail") or [])
+        _check(n, "ts-build-fail: build is fail with TS2322",
+               ok=e.get("status") == "fail" and "TS2322" in tail, detail=f"entry={e}")
+
         # --- js-detect: detection only -------------------------------------
-        code, out, err, _ = _run("js-detect", tmp, ["--dry-run"], deps=False)
+        code, out, err, _ = _run("js-detect", tmp, ["--dry-run"])
         lines = [ln.strip() for ln in out.splitlines()]
         want = [
             "build: npx --no-install tsc --noEmit  [config]",
