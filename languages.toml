@@ -434,7 +434,10 @@ extensions        = [".php"]
 build_files       = ["composer.json"]
 build_priority    = ["composer.json"]
 dep_folders       = ["vendor"]
-dep_error_phrases = ["Class not found", "No such file or directory"]
+# "No such file or directory" is deliberately absent: PHP prints it for any failed include/fopen in
+# the project's own code.  vendor/autoload.php missing means `composer install` was never run.
+dep_error_phrases = ["vendor/autoload.php", "Your requirements could not be resolved",
+                     "Composer could not find"]
 stages            = ["lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", "clover.xml"]
 tested            = false
@@ -458,6 +461,41 @@ build    = []
 lint     = []
 tests    = []
 coverage = []
+
+# config_commands: tools are project-local (vendor/bin/...) and run only when the project declares
+# them with a config file next to composer.json (or a composer script, which always wins).
+# Coverage needs a driver (Xdebug/PCOV); without one phpunit warns and writes nothing, which
+# surfaces as coverage_missing.
+[[language.php.config_commands]]
+stage   = "tests"
+files   = ["phpunit.xml", "phpunit.xml.dist"]
+command = "vendor/bin/phpunit"
+
+[[language.php.config_commands]]
+stage   = "lint"
+files   = ["phpcs.xml", "phpcs.xml.dist", ".phpcs.xml"]
+command = "vendor/bin/phpcs"
+
+[[language.php.config_commands]]
+stage   = "lint"
+files   = ["phpstan.neon", "phpstan.neon.dist"]
+command = "vendor/bin/phpstan analyse"
+
+[[language.php.config_commands]]
+stage   = "lint"
+files   = ["psalm.xml", "psalm.xml.dist"]
+command = "vendor/bin/psalm"
+
+# php-cs-fixer rewrites files by default; only the read-only form is ever run.
+[[language.php.config_commands]]
+stage   = "lint"
+files   = [".php-cs-fixer.php", ".php-cs-fixer.dist.php"]
+command = "vendor/bin/php-cs-fixer fix --dry-run --diff"
+
+[[language.php.config_commands]]
+stage   = "coverage"
+files   = ["phpunit.xml", "phpunit.xml.dist"]
+command = "vendor/bin/phpunit --coverage-clover clover.xml"
 
 
 [language.ruby]

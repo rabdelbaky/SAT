@@ -199,6 +199,16 @@ def resolve_executable(args: list[str], cwd: Path) -> list[str] | None:
                 if wrapper_cmd.exists():
                     return [str(wrapper_cmd)] + args[1:]
 
+    # A relative path with a separator (vendor/bin/phpunit, ./bin/rails) is
+    # relative to the PROJECT folder, not to this process's working directory.
+    if ("/" in exe or "\\" in exe) and not Path(exe).is_absolute():
+        suffixes = ("", ".cmd", ".bat", ".exe") if sys.platform == "win32" else ("",)
+        for suffix in suffixes:
+            candidate = cwd / (exe + suffix)
+            if candidate.is_file():
+                return [str(candidate)] + args[1:]
+        return None
+
     # No wrapper found; resolve via shutil.which
     resolved = shutil.which(exe)
     if resolved is None:

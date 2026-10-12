@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+tests = "php run_tests.php"
