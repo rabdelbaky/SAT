@@ -13,7 +13,8 @@ Three groups, each compared with the java-* section of tests/fixtures/EXPECTED.m
    _VARIANTS), plus java-maven-multi and java-gradle-multi.  Need `mvn` and
    `gradle` on PATH and internet access the first time (Maven/Gradle download
    the project's plugins and libraries into their own cache; this tool
-   installs nothing).
+   installs nothing).  Without `gradle` on PATH, the Gradle checks are shown
+   as SKIP (not run) and counted separately; they are never counted as passed.
 3. No tools needed: java-maven-wrapper / java-gradle-wrapper (fake mvnw /
    gradlew scripts that only print a line) and java-maven-detect /
    java-gradle-detect (--dry-run).
@@ -39,7 +40,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 import pre_llm_checks  # noqa: E402
 
 _FIXTURES = _REPO_ROOT / "tests" / "fixtures"
-_PASS, _FAIL = "PASS", "FAIL"
+_PASS, _FAIL, _SKIP = "PASS", "FAIL", "SKIP"
 _results: list[tuple[int, str, str]] = []
 _WIN = sys.platform == "win32"
 
@@ -78,7 +79,12 @@ for _tool in ("maven", "gradle"):
     _EXPECTED_REAL[f"java-{_tool}-multi"] = (f"java-{_tool}-multi", "ok", "PASS", "WARN", "PASS", "SKIP", 0)
 
 
-def _check(num: int, description: str, *, ok: bool, detail: str = "") -> None:
+def _check(num: int, description: str, *, ok: bool, detail: str = "", skip: str = "") -> None:
+    """Record one check.  *skip* (a reason) records SKIP: not run, never a pass."""
+    if skip:
+        print(f"{_SKIP}  {num:2d}. {description}  (not run: {skip})", flush=True)
+        _results.append((num, _SKIP, description))
+        return
     label = _PASS if ok else _FAIL
     suffix = f"  ({detail})" if detail and not ok else ""
     print(f"{label}  {num:2d}. {description}{suffix}", flush=True)
@@ -156,11 +162,12 @@ def run_checks() -> int:
     for tool, how in (
         ("javac", "install a JDK 17 or newer"),
         ("mvn", "install Maven and add its bin folder to PATH"),
-        ("gradle", "install Gradle and add its bin folder to PATH"),
     ):
         n += 1
         _check(n, f"{tool} is on PATH", ok=shutil.which(tool) is not None,
                detail=f"{how}, open a new PowerShell, run this check again")
+    # Gradle is optional here: without it the real Gradle runs are skipped.
+    no_gradle = "" if shutil.which("gradle") else "gradle is not on PATH"
 
     # ignore_cleanup_errors: a Gradle daemon may still hold a file in the copy.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
@@ -195,6 +202,13 @@ def run_checks() -> int:
 
         # --- 2. real Maven / Gradle runs -------------------------------------------
         for copy_name, (fixture, variant, b, li, t, c, want_exit) in _EXPECTED_REAL.items():
+            skip = no_gradle if "gradle" in copy_name else ""
+            if skip:
+                n += 1
+                _check(n, f"{copy_name}: one table row, cells {b} {li} {t} {c}", ok=False, skip=skip)
+                n += 1
+                _check(n, f"{copy_name}: exit code {want_exit}", ok=False, skip=skip)
+                continue
             print(f"      running {copy_name} (real {'Maven' if 'maven' in copy_name else 'Gradle'}) ...",
                   flush=True)
             code, out, err, rep = _run(fixture, tmp, copy_name=copy_name, variant=variant)
@@ -207,53 +221,54 @@ def run_checks() -> int:
             _check(n, f"{copy_name}: exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
 
         for tool, build_cmd in (("maven", ["mvn", "compile"]), ("gradle", ["gradle", "assemble"])):
-            rep = reports[f"java-{tool}-ok"]
+            skip = no_gradle if tool == "gradle" else ""
+            rep = reports.get(f"java-{tool}-ok")
             n += 1
             e = _entry(rep, "build")
             _check(n, f"java-{tool}-ok: build command is {' '.join(build_cmd)}",
-                   ok=e.get("command") == build_cmd and e.get("status") == "pass", detail=f"entry={e}")
+                   ok=e.get("command") == build_cmd and e.get("status") == "pass", detail=f"entry={e}", skip=skip)
             n += 1
             cov = ((rep or {}).get("projects") or [{}])[0].get("coverage") or {}
             files = [r.get("source_file", "") for r in cov.get("results", [])]
             _check(n, f"java-{tool}-ok: coverage read from the JaCoCo XML",
                    ok=any(f.endswith(".xml") and "jacoco" in f.lower() for f in files),
-                   detail=f"coverage={cov}")
+                   detail=f"coverage={cov}", skip=skip)
 
-            rep = reports[f"java-{tool}-build-fail"]
+            rep = reports.get(f"java-{tool}-build-fail")
             n += 1
             e = _entry(rep, "build")
             _check(n, f"java-{tool}-build-fail: build is fail (not dependencies_missing), lint/tests skipped by build_gate",
                    ok=e.get("status") == "fail"
                    and [_entry(rep, s).get("reason") for s in ("lint", "tests")] == ["build_gate"] * 2,
-                   detail=f"entry={e}")
+                   detail=f"entry={e}", skip=skip)
 
-            rep = reports[f"java-{tool}-test-fail"]
+            rep = reports.get(f"java-{tool}-test-fail")
             n += 1
             _check(n, f"java-{tool}-test-fail: build passed, tests is fail and names CalcTest",
                    ok=_entry(rep, "build").get("status") == "pass"
                    and _entry(rep, "tests").get("status") == "fail"
                    and "CalcTest" in _tail(_entry(rep, "tests")),
-                   detail=f"tests={_entry(rep, 'tests')}")
+                   detail=f"tests={_entry(rep, 'tests')}", skip=skip)
 
-            rep = reports[f"java-{tool}-lint-fail"]
+            rep = reports.get(f"java-{tool}-lint-fail")
             n += 1
             e = _entry(rep, "lint")
             _check(n, f"java-{tool}-lint-fail: lint is fail and output names Calc.java",
-                   ok=e.get("status") == "fail" and "Calc.java" in _tail(e), detail=f"entry={e}")
+                   ok=e.get("status") == "fail" and "Calc.java" in _tail(e), detail=f"entry={e}", skip=skip)
 
-            rep = reports[f"java-{tool}-no-tests"]
+            rep = reports.get(f"java-{tool}-no-tests")
             n += 1
             e = _entry(rep, "tests")
             _check(n, f"java-{tool}-no-tests: tests skipped with reason no_tests_found",
                    ok=e.get("status") == "skipped" and e.get("reason") == "no_tests_found",
-                   detail=f"entry={e}")
+                   detail=f"entry={e}", skip=skip)
 
-            rep = reports[f"java-{tool}-multi"]
+            rep = reports.get(f"java-{tool}-multi")
             n += 1
             projects = (rep or {}).get("projects") or []
             _check(n, f"java-{tool}-multi: report has one project (modules are part of the root)",
                    ok=len(projects) == 1 and _entry(rep, "tests").get("status") == "pass",
-                   detail=f"projects={[p.get('path') for p in projects]}")
+                   detail=f"projects={[p.get('path') for p in projects]}", skip=skip)
 
         # --- 3. wrappers (fake scripts, no tools needed) ---------------------------
         wrappers = {
@@ -304,8 +319,10 @@ def run_checks() -> int:
 
     print()
     passed = sum(1 for _, label, _ in _results if label == _PASS)
-    total = len(_results)
-    print(f"{'All checks passed' if passed == total else 'Some checks FAILED'}: {passed}/{total}")
+    skipped = sum(1 for _, label, _ in _results if label == _SKIP)
+    total = len(_results) - skipped
+    note = f" ({skipped} Gradle checks not run: gradle is not on PATH)" if skipped else ""
+    print(f"{'All checks passed' if passed == total else 'Some checks FAILED'}: {passed}/{total}{note}")
     return 0 if passed == total else 1
 
 

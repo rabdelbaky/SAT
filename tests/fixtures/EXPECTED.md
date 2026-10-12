@@ -627,7 +627,8 @@ language `java [untested]`. No fixture configures coverage, so Coverage is `SKIP
 
 These run the real build tools. Requires `mvn` and `gradle` on PATH, a JDK 17 or newer, and internet access the
 first time (Maven and Gradle download the fixture's plugins and libraries into their own cache; this tool
-installs nothing). `java-maven-ok` and `java-gradle-ok` are the same tiny project (`demo.Calc` with `add` and
+installs nothing). If `gradle` is not on PATH, `tests/manual_java_check.py` shows the Gradle rows as `SKIP` (not run) and
+counts them separately; they never count as passed. `java-maven-ok` and `java-gradle-ok` are the same tiny project (`demo.Calc` with `add` and
 `sub`, one JUnit 5 test for `add`) built by Maven or Gradle. Both declare checkstyle (one rule from
 `checkstyle.xml`: no `FIXME` comments) and JaCoCo (Gradle with `xml.required = true`). Coverage is
 1 of 3 lines (`add`; `sub` and the class line are not run) = `33.3%`.
