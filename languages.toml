@@ -181,19 +181,80 @@ lint     = ["checkstyle.xml", ".checkstyle", "pmd.xml", "spotbugs.xml"]
 tests    = []
 coverage = ["jacoco.xml"]
 
-# Maven and Gradle have built-in lifecycle phases — no script or config needed.
+# build_tools: which command prefixes belong to which build file.  A pom.xml
+# project only gets mvn/mvnw commands, a Gradle project only gradle/gradlew.
+[language.java.build_tools]
+"pom.xml"          = ["mvn", "./mvnw"]
+"build.gradle"     = ["gradle", "./gradlew"]
+"build.gradle.kts" = ["gradle", "./gradlew"]
+
+# Maven and Gradle have built-in lifecycle phases for build and tests only.
+# Lint and coverage are NOT built-in: they run only when the build file
+# declares the plugin (see config_commands below), so a bare project reports
+# no_linter_configured instead of failing on a plugin it never declared.
 [language.java.builtin_phases]
 build    = ["mvn compile", "mvn package", "mvn install",
             "gradle build", "gradle assemble",
             "./mvnw compile", "./mvnw package", "./mvnw install",
             "./gradlew build", "./gradlew assemble"]
-lint     = ["mvn checkstyle:check", "mvn pmd:check", "mvn spotbugs:check",
-            "./mvnw checkstyle:check", "./mvnw pmd:check", "./mvnw spotbugs:check",
-            "gradle check", "./gradlew check"]
+lint     = []
 tests    = ["mvn test", "./mvnw test",
             "gradle test", "./gradlew test"]
-coverage = ["mvn jacoco:report", "./mvnw jacoco:report",
-            "gradle jacocoTestReport", "./gradlew jacocoTestReport"]
+coverage = []
+
+# config_commands: the tool runs when the build file declares its plugin
+# (build_file_contains) or a lint config file sits next to it (files).
+# Maven rules apply to pom.xml only, Gradle rules to the Gradle build files.
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["pom.xml"]
+build_file_contains = ["maven-checkstyle-plugin"]
+files               = ["checkstyle.xml", ".checkstyle"]
+command             = "mvn checkstyle:check"
+
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["pom.xml"]
+build_file_contains = ["maven-pmd-plugin"]
+files               = ["pmd.xml"]
+command             = "mvn pmd:check"
+
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["pom.xml"]
+build_file_contains = ["spotbugs-maven-plugin"]
+files               = ["spotbugs.xml"]
+command             = "mvn spotbugs:check"
+
+[[language.java.config_commands]]
+stage               = "coverage"
+build_files         = ["pom.xml"]
+build_file_contains = ["jacoco-maven-plugin"]
+command             = "mvn jacoco:report"
+
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["build.gradle", "build.gradle.kts"]
+build_file_contains = ["checkstyle"]
+command             = "gradle checkstyleMain"
+
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["build.gradle", "build.gradle.kts"]
+build_file_contains = ["pmd"]
+command             = "gradle pmdMain"
+
+[[language.java.config_commands]]
+stage               = "lint"
+build_files         = ["build.gradle", "build.gradle.kts"]
+build_file_contains = ["spotbugs"]
+command             = "gradle spotbugsMain"
+
+[[language.java.config_commands]]
+stage               = "coverage"
+build_files         = ["build.gradle", "build.gradle.kts"]
+build_file_contains = ["jacoco"]
+command             = "gradle jacocoTestReport"
 
 
 [language.kotlin]

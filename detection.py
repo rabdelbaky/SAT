@@ -221,14 +221,39 @@ def _pyproject_has_table(project_path: Path, dotted: str) -> bool:
     return True
 
 
-def _config_rule_matches(project_path: Path, rule: dict) -> bool:
-    """Return True if the project declares the tool a config_commands rule names."""
+def _build_file_text(project: "Project") -> str:
+    """Return the text of the project's primary build file ("" if unreadable)."""
+    try:
+        return (project.path / project.primary_build_file).read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return ""
+
+
+def _config_rule_matches(project: "Project", rule: dict) -> bool:
+    """Return True if the project declares the tool a config_commands rule names.
+
+    Optional ``build_files`` limits a rule to projects whose primary build file
+    is in the list (e.g. Maven-only rules).  The tool is then declared by any of:
+    ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml, or
+    ``build_file_contains`` (a plugin name inside the primary build file).
+    """
+    applies_to = rule.get("build_files")
+    if applies_to and project.primary_build_file not in applies_to:
+        return False
     files = rule.get("files", [])
-    if files and _has_config_file(project_path, files):
+    if files and _has_config_file(project.path, files):
         return True
-    return any(
-        _pyproject_has_table(project_path, t) for t in rule.get("pyproject_tables", [])
-    )
+    if any(
+        _pyproject_has_table(project.path, t) for t in rule.get("pyproject_tables", [])
+    ):
+        return True
+    needles = rule.get("build_file_contains", [])
+    if needles:
+        text = _build_file_text(project)
+        return any(n in text for n in needles)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -349,20 +374,25 @@ def _command_for_script_value(script_value: str) -> list[str]:
 def _builtin_commands_for_stage(
     stage: str,
     lang_cfg: dict,
-    project_path: Path,
+    project: "Project",
 ) -> list[StageCommand]:
-    """Return built-in phase commands for *stage*, preferring wrappers."""
+    """Return the built-in phase command for *stage*, or [].
+
+    If the language declares ``build_tools`` (build file -> allowed command
+    prefixes), only commands of the project's own build tool are considered:
+    a pom.xml project never gets `gradle ...` and vice versa.  The first
+    matching command is used; the runner substitutes mvnw/gradlew later.
+    """
     builtin_phases: dict[str, list[str]] = lang_cfg.get("builtin_phases", {})
     raw_commands: list[str] = builtin_phases.get(stage, [])
+
+    build_tools: dict[str, list[str]] = lang_cfg.get("build_tools", {})
+    prefixes = build_tools.get(project.primary_build_file)
+    if prefixes:
+        raw_commands = [c for c in raw_commands if c.split(" ", 1)[0] in prefixes]
     if not raw_commands:
         return []
 
-    # Prefer wrapper executables (mvnw, gradlew, ./mvnw, ./gradlew).
-    # We return all defined built-in commands and let the runner pick the
-    # available one.  For now return the first command only to avoid
-    # redundant duplicates (runner selection is Session 6's concern).
-    # Actually, per SPEC: different args are different commands.  Built-ins are
-    # not user scripts so we just return the first defined one per stage.
     raw = raw_commands[0]
     try:
         argv = shlex.split(raw)
@@ -450,7 +480,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
         stage = rule.get("stage")
         if stage not in commands or stage in script_stages:
             continue
-        if not _config_rule_matches(project.path, rule):
+        if not _config_rule_matches(project, rule):
             continue
         argv = _command_for_script_value(rule.get("command", ""))
         if not argv:
@@ -465,7 +495,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     for stage in stages:
         if commands[stage]:
             continue  # already have commands; built-ins don't supplement
-        builtin_cmds = _builtin_commands_for_stage(stage, lang_cfg, project.path)
+        builtin_cmds = _builtin_commands_for_stage(stage, lang_cfg, project)
         if builtin_cmds:
             commands[stage].extend(builtin_cmds)
 

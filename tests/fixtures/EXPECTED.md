@@ -557,3 +557,55 @@ A `package.json` that lists `eslint`, `jest` or `typescript` only under `devDepe
 
 TypeScript note: TS projects are the same `javascript` language entry. `tsconfig.json` is detected as a
 build (type-check) command; there is no separate TS fixture yet.
+
+---
+
+## java-* (Session 12)
+
+Tiny Java projects that need **no Maven, Gradle or network**: each has a bare `pom.xml` (it makes the folder a
+Java project) and a `pre-llm.toml` that replaces the build tool with the JDK:
+`build` = `javac -d out Calc.java CalcTest.java`, `tests` = `java -cp out CalcTest`,
+`lint` = `java LintCheck.java` (fails on a `FIXME` marker). Requires `javac` and `java` (JDK 11+) on PATH.
+`out/` is ignored by a `.gitignore` in each fixture. Run with `--path <copy>`; the project is `.`,
+language `java [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `java-ok` | PASS | PASS | PASS | SKIP | 0 | |
+| `java-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `Calc.java` does not compile; build gate skips the rest (`build_gate`) |
+| `java-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) == 6` |
+| `java-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `// FIXME` in `Calc.java`; lint output names `Calc.java:3: no-fixme`; tests still run |
+| `java-no-linter` | PASS | WARN | PASS | SKIP | 0 | bare `pom.xml`, no checkstyle/pmd/spotbugs plugin, no lint config: `no_linter_configured` |
+
+**No `java-no-tests` fixture (n/a for Java).** Maven and Gradle have a built-in `test` phase, so a Java project
+always has a tests command (`mvn test` / `gradle test`); a project with zero tests is a successful run decided
+by the build tool, not by this tool. Checklist cell: `n/a`.
+
+### java-maven-detect and java-gradle-detect
+
+Real build files, no `pre-llm.toml`. Checked with `--dry-run`; nothing is installed or run. Built-in
+phases (`build`, `tests`) come from the project's own build tool; **lint and coverage appear only because the
+build file declares the plugin** (a bare `pom.xml` / `build.gradle` has neither; see `java-no-linter`).
+Expected lines after the project line:
+
+`java-maven-detect` (pom.xml declares `maven-checkstyle-plugin` and `jacoco-maven-plugin`):
+```
+  build: mvn compile  [builtin]
+  lint: mvn checkstyle:check  [config]
+  tests: mvn test  [builtin]
+  coverage: mvn jacoco:report  [config]
+```
+
+`java-gradle-detect` (build.gradle declares `checkstyle` and `jacoco`):
+```
+  build: gradle build  [builtin]
+  lint: gradle checkstyleMain  [config]
+  tests: gradle test  [builtin]
+  coverage: gradle jacocoTestReport  [config]
+```
+
+A Maven project never lists `gradle ...` commands and a Gradle project never lists `mvn ...` commands.
+The wrapper (`mvnw` / `gradlew`) is chosen by the runner at run time, so `--dry-run` shows plain `mvn` / `gradle`.
+
+**Not covered by fixtures:** a real `mvn` / `gradle` run (needs the tools and network). Try one by hand on a
+real Maven or Gradle project before marking Java `tested`.

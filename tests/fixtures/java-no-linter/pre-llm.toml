@@ -1,0 +1,4 @@
+[[project]]
+path = "."
+build = "javac -d out Calc.java CalcTest.java"
+tests = "java -cp out CalcTest"
