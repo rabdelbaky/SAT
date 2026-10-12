@@ -161,6 +161,7 @@ def discover_projects(
 
     for folder, dirnames, _ in _walk_skipping(root, extra_skip=extra_skip):
         folder_path = Path(folder)
+        found: list[Project] = []
 
         for lang_name, lang_cfg in languages.items():
             bf_patterns: list[str] = lang_cfg.get("build_files", [])
@@ -172,7 +173,7 @@ def discover_projects(
                 continue
 
             primary = _primary_build_file(present, priority)
-            projects.append(
+            found.append(
                 Project(
                     path=folder_path,
                     language=lang_name,
@@ -182,8 +183,56 @@ def discover_projects(
                 )
             )
 
+        projects.extend(_resolve_shared_build_files(found, languages, extra_skip))
+
     projects.sort(key=lambda p: (str(p.path), p.language))
     return projects
+
+
+# Gradle scripts (build.gradle.kts, settings.gradle.kts) end in .kts but are
+# build files, not Kotlin sources.
+_BUILD_SCRIPT_SUFFIXES = (".gradle", ".gradle.kts")
+
+
+def _has_sources(folder: Path, extensions: list[str], extra_skip: frozenset[str]) -> bool:
+    """Return True if *folder* contains a source file with one of *extensions*.
+
+    Skipped folders and build scripts do not count.
+    """
+    wanted = tuple(extensions)
+    for _, _, filenames in _walk_skipping(folder, extra_skip=extra_skip):
+        for name in filenames:
+            if name.endswith(wanted) and not name.endswith(_BUILD_SCRIPT_SUFFIXES):
+                return True
+    return False
+
+
+def _resolve_shared_build_files(
+    found: list[Project],
+    languages: dict,
+    extra_skip: frozenset[str],
+) -> list[Project]:
+    """Resolve languages that claim the same primary build file in one folder.
+
+    java and kotlin both list build.gradle(.kts).  Keep the languages that have
+    source files of their own extensions; if none do, keep the first declared.
+    """
+    by_primary: dict[str, list[Project]] = {}
+    for p in found:
+        by_primary.setdefault(p.primary_build_file, []).append(p)
+
+    kept: list[Project] = []
+    for group in by_primary.values():
+        if len(group) == 1:
+            kept.extend(group)
+            continue
+        with_sources = [
+            p
+            for p in group
+            if _has_sources(p.path, languages[p.language].get("extensions", []), extra_skip)
+        ]
+        kept.extend(with_sources or group[:1])
+    return kept
 
 
 def _walk_skipping(root: Path, extra_skip: frozenset[str] = frozenset()):

@@ -609,3 +609,8 @@ The wrapper (`mvnw` / `gradlew`) is chosen by the runner at run time, so `--dry-
 
 **Not covered by fixtures:** a real `mvn` / `gradle` run (needs the tools and network). Try one by hand on a
 real Maven or Gradle project before marking Java `tested`.
+
+**Shared Gradle build files.** `build.gradle` / `build.gradle.kts` are claimed by both `java` and `kotlin`. A folder
+with one of them is reported **once**: for the language whose source extensions (`.java` / `.kt`) exist under it
+(both languages if both exist; `.gradle` / `.gradle.kts` scripts never count as sources); with no sources at all,
+the first declared language (`java`). So `java-gradle-detect` (no sources) lists only Java commands.
