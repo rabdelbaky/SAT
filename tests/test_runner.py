@@ -334,6 +334,10 @@ def test_log_file_contains_stderr(tmp_path):
 # ===========================================================================
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="extensionless wrapper is POSIX-only; Windows uses mvnw.cmd/gradlew.bat",
+)
 def test_resolve_executable_prefers_mvnw_in_cwd(tmp_path):
     # Create a fake mvnw in tmp_path (no .cmd; POSIX-style name)
     wrapper = tmp_path / "mvnw"
@@ -345,6 +349,10 @@ def test_resolve_executable_prefers_mvnw_in_cwd(tmp_path):
     assert resolved[0] == str(wrapper)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="extensionless wrapper is POSIX-only; Windows uses mvnw.cmd/gradlew.bat",
+)
 def test_resolve_executable_prefers_gradlew_in_cwd(tmp_path):
     wrapper = tmp_path / "gradlew"
     wrapper.write_text('#!/bin/sh\nexec gradle "$@"\n')

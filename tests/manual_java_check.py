@@ -291,7 +291,8 @@ def run_checks() -> int:
             runners = ((rep or {}).get("environment") or {}).get("runners", {})
             n += 1
             _check(n, f"{name}: environment does not claim the {detected[0]} on PATH ran",
-                   ok=detected[0] not in runners and runners.get(wrapper) == "unknown",
+                   # the environment key drops .cmd/.bat: "mvnw.cmd" -> "mvnw"
+                   ok=detected[0] not in runners and runners.get(wrapper.split(".")[0]) == "unknown",
                    detail=f"runners={runners}")
 
         # --- detection-only fixtures: --dry-run --------------------------------------
