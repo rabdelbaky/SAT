@@ -47,6 +47,23 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "go": Lang(
+        tools=["go"],
+        execution={
+            "go-ok": ("PASS", "PASS", "PASS", "100.0%", 0),
+            "go-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
+            "go-test-fail": ("PASS", "PASS", "FAIL", "FAIL", 1),
+            "go-lint-fail": ("PASS", "FAIL", "PASS", "100.0%", 1),
+        },
+        detect={
+            "go-detect": [
+                "build: go build ./...  [builtin]",
+                "lint: golangci-lint run  [config]",
+                "tests: go test ./...  [builtin]",
+                "coverage: go test -coverprofile=coverage.out ./...  [builtin]",
+            ]
+        },
+    ),
     "kotlin": Lang(
         detect={
             "kotlin-detect": [

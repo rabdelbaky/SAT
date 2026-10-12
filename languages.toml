@@ -339,6 +339,14 @@ lint     = ["go vet ./..."]
 tests    = ["go test ./..."]
 coverage = ["go test -coverprofile=coverage.out ./..."]
 
+# go vet ships with the Go toolchain, so every Go module has a linter (no_linter_configured
+# does not apply).  A golangci-lint config declared by the project replaces it.
+[[language.go.config_commands]]
+stage   = "lint"
+files   = [".golangci.yml", ".golangci.yaml", ".golangci.json", ".golangci.toml",
+           "golangci.yml", "golangci.yaml"]
+command = "golangci-lint run"
+
 
 [language.csharp]
 # C#/.NET — keyed as "csharp".
