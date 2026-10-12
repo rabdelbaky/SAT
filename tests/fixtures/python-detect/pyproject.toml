@@ -1,0 +1,12 @@
+[project]
+name = "python-detect"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+
+[tool.coverage.run]
+source = ["calc"]

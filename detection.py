@@ -207,6 +207,30 @@ def _has_config_file(project_path: Path, config_patterns: list[str]) -> bool:
     return False
 
 
+def _pyproject_has_table(project_path: Path, dotted: str) -> bool:
+    """Return True if pyproject.toml next to the build file has table *dotted*."""
+    try:
+        with open(project_path / "pyproject.toml", "rb") as fh:
+            node = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
+def _config_rule_matches(project_path: Path, rule: dict) -> bool:
+    """Return True if the project declares the tool a config_commands rule names."""
+    files = rule.get("files", [])
+    if files and _has_config_file(project_path, files):
+        return True
+    return any(
+        _pyproject_has_table(project_path, t) for t in rule.get("pyproject_tables", [])
+    )
+
+
 # ---------------------------------------------------------------------------
 # package.json script parsing
 # ---------------------------------------------------------------------------
@@ -415,22 +439,27 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
             StageCommand(command=argv, source=f"script:{script_name}")
         )
 
-    # --- Step 2: config-file detection (if no script found for that stage) ---
-    for stage in stages:
-        if commands[stage]:
-            continue  # already have a command from scripts
-        config_patterns = config_files_map.get(stage, [])
-        if config_patterns and _has_config_file(project.path, config_patterns):
-            # A config file is present: the tool is configured but there's no
-            # explicit script.  Record it as config-detected (no command to
-            # run yet; the runner will use the default invocation).
-            # For now we record an empty StageCommand with source="config" to
-            # signal that the stage is configured.  The runner (Session 6) will
-            # resolve the actual executable.
-            # NOTE: we do NOT add a command here — the runner session will
-            # resolve from builtin_phases after seeing source="config".
-            # Instead, fall through to builtin detection below.
-            pass
+    # --- Step 2: config-file detection --------------------------------
+    # languages.toml may declare ``config_commands`` rules.  A rule fires only
+    # for a stage that no script already covers, and only when the project
+    # itself declares the tool (config file or pyproject table).  Several
+    # rules can fire for one stage (different tools); identical commands run
+    # once.
+    script_stages = {stage for stage in stages if commands[stage]}
+    for rule in lang_cfg.get("config_commands", []):
+        stage = rule.get("stage")
+        if stage not in commands or stage in script_stages:
+            continue
+        if not _config_rule_matches(project.path, rule):
+            continue
+        argv = _command_for_script_value(rule.get("command", ""))
+        if not argv:
+            continue
+        key = tuple(argv)
+        if key in seen_commands[stage]:
+            continue
+        seen_commands[stage].append(key)
+        commands[stage].append(StageCommand(command=argv, source="config"))
 
     # --- Step 3: built-in phase detection (for build systems that need no script) ---
     for stage in stages:
