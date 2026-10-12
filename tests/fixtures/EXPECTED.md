@@ -45,7 +45,7 @@ dist/                                 ← SKIPPED (dist is a skip folder)
 | `.`                             | javascript | `package.json`       | `["package.json"]`                        | false    |
 | `packages/api`                  | javascript | `package.json`       | `["package.json"]`                        | false    |
 | `packages/ui`                   | javascript | `package.json`       | `["package.json"]`                        | false    |
-| `services/ml`                   | python     | `pyproject.toml`     | `["pyproject.toml", "requirements.txt"]`  | false    |
+| `services/ml`                   | python     | `pyproject.toml`     | `["pyproject.toml", "requirements.txt"]`  | true     |
 | `services/worker`               | go         | `go.mod`             | `["go.mod"]`                              | false    |
 
 **Total: 5 projects**
@@ -69,17 +69,19 @@ dist/                                 ← SKIPPED (dist is a skip folder)
 - `services/worker/main.go` belongs to `services/worker` (go).
 - `services/ml/train.py` belongs to `services/ml` (python).
 
-**--dry-run output** (one line per project, format: `<path>  <language>  <build_files>  [untested]`):
+**--dry-run output** (one line per project, format: `<path>  <language>  <build_files>  [untested]`;
+the `[untested]` suffix is left off for a tested language):
 
 ```
 .  javascript  package.json  [untested]
 packages/api  javascript  package.json  [untested]
 packages/ui  javascript  package.json  [untested]
-services/ml  python  pyproject.toml, requirements.txt  [untested]
+services/ml  python  pyproject.toml, requirements.txt
 services/worker  go  go.mod  [untested]
 ```
 
-*(All languages are `[untested]` until fixtures pass; exact whitespace may vary.)*
+*(Python is tested since Session 10; the others are `[untested]` until their fixtures pass; exact
+whitespace may vary.)*
 
 **No-project exit code**: running the tool against an empty folder must exit 3
 and print `No supported projects found.` to stderr.
@@ -481,11 +483,15 @@ Runners are the executables of commands that actually ran (not skipped), one ent
 
 ## python-* (Session 10)
 
-Tiny stdlib-only Python projects. They need no installed packages: tests are `python -B -m unittest -q`,
-the "linter" is `python -B lint_check.py` (every `*.py` in the folder must parse), declared in each
-fixture's `pre-llm.toml`. `-B` keeps the fixture folder free of `__pycache__`. Python has **no build
+Tiny Python projects. The "linter" is `python -B lint_check.py` (every `*.py` in the folder must
+parse), declared in each fixture's `pre-llm.toml`. `python-ok` and `python-test-fail` run tests with
+the detected `pytest` (from `[tool.pytest.ini_options]` in their `pyproject.toml`, with
+`addopts = "-q -p no:cacheprovider"`), so they need `pytest` on PATH. The other run fixtures still
+use `python -B -m unittest -q` from `pre-llm.toml` and need no installed packages. `-B` keeps the
+fixture folder free of `__pycache__`. Python has **no build
 command**, so the Build cell is always `SKIP`. No fixture configures coverage, so Coverage is `SKIP`.
-Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python [untested]`.
+Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python` (tested, so no
+`[untested]` label).
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -497,13 +503,14 @@ Run each with `--path tests/fixtures/<name>`; the project is `.`, language `pyth
 
 Report checks: `projects[0].commands` has one entry per stage; lint on `python-no-linter` has
 `status: "no_linter_configured"`; `python-lint-fail` lint entry has `status: "fail"` and a non-empty `output_tail`
-naming `bad_syntax.py`.
+naming `bad_syntax.py`. On `python-ok` and `python-test-fail` the tests entry has `"command": ["pytest"]`
+and `"source": "config"`.
 
 ### python-detect
 
 No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool.ruff]` and
 `[tool.coverage.run]`. Nothing is installed or run: check it with `--dry-run`. Expected lines
-(after the project line, which shows the full path, `python`, `pyproject.toml` and `[untested]`):
+(after the project line, which shows the full path, `python` and `pyproject.toml`):
 
 ```
   lint: ruff check .  [config]
@@ -514,6 +521,19 @@ No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool
 Python has no `build` line. A `pyproject.toml` that lists `pytest` or `ruff` only as a dependency
 (and has no `[tool.*]` table) detects nothing.
 
+### python-detect-ini
+
+No `pyproject.toml` and no `pre-llm.toml`; the build file is `requirements.txt`. `setup.cfg` declares
+`[tool:pytest]`, `[flake8]` and `[coverage:run]`. Nothing is installed or run: check it with
+`--dry-run`. Expected lines (after the project line, which shows the full path, `python` and
+`requirements.txt`), exactly these and no `build` line:
+
+```
+  lint: flake8 .  [config]
+  tests: pytest  [config]
+  coverage: pytest --cov --cov-report=xml  [config]
+```
+
 ---
 
 ## js-* (Session 11)
@@ -522,10 +542,10 @@ Tiny JavaScript projects that need **no `npm install`**: they use only Node buil
 `package.json`: `build` = `node --check calc.js` (syntax check), `lint` = `node lint-check.js`
 (fails on a `debugger` statement), `test` = `node --test`. Requires `node` and `npm` on PATH.
 
-JavaScript projects are skipped as `dependencies_missing` when `node_modules` does not exist, and this
-repo does not commit `node_modules`. **Create an empty `node_modules` folder in a copy of the fixture
-before running** (`tests/manual_js_check.py` does this). Run with `--path <copy>`; the project is `.`,
-language `javascript [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+The fixtures declare no packages (no `dependencies` / `devDependencies` / `optionalDependencies` /
+`peerDependencies`), so the `node_modules` check does not apply and no `node_modules` folder is needed.
+Only `js-missing-deps` declares a package. Run with `--path tests/fixtures/<name>` (or a copy); the
+project is `.`, language `javascript [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -535,9 +555,34 @@ language `javascript [untested]`. No fixture configures coverage, so Coverage is
 | `js-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `debugger;` in `calc.js`; lint output names `calc.js:2: no-debugger`; tests still run |
 | `js-no-tests` | PASS | PASS | SKIP | SKIP | 0 | no `test` script, no test config: tests stage skipped (`nothing_to_run`) |
 | `js-no-linter` | PASS | WARN | PASS | SKIP | 0 | no `lint` script, no lint config: `no_linter_configured` |
+| `js-bad-require` | PASS | PASS | FAIL | SKIP | 1 | test requires `./calcx.js`, which does not exist: a code bug, so FAIL, not a warning |
+| `js-missing-deps` | SKIP | SKIP | SKIP | SKIP | 0 | declares `left-pad`, no `node_modules`: every stage skipped, warning `dependencies_missing` |
+| `js-missing-deps` + empty `node_modules` | PASS | WARN | WARN | SKIP | 0 | half-done install: test prints `Cannot find module 'left-pad'` -> `dependencies_missing` |
 
 Report checks: `js-no-linter` lint entry has `status: "no_linter_configured"`; `js-build-fail` build entry is `fail`
 and its lint/tests/coverage entries have `reason: "build_gate"`; `js-lint-fail` lint `output_tail` names `calc.js`.
+`js-bad-require` tests entry has `status: "fail"` and its `output_tail` names `calcx`. `js-missing-deps` (no
+`node_modules`): the build, lint, tests and coverage entries each have a `reason` starting with
+`dependencies_missing`, and the project's `warnings` list contains `dependencies_missing`. `js-missing-deps` with an
+empty `node_modules`: tests entry has `status: "dependencies_missing"` and its `output_tail` names `left-pad`.
+
+### ts-ok, ts-build-fail
+
+TypeScript through the detected config rule: no scripts, `package.json` is bare, and `tsconfig.json` gives the
+build command `npx --no-install tsc --noEmit` (`source: "config"`). Needs `tsc` on PATH
+(`npm install -g typescript`). `tsc --noEmit` writes no files.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `ts-ok` | PASS | WARN | SKIP | SKIP | 0 | no linter, no tests configured |
+| `ts-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `TS2322` in the build `output_tail` |
+
+Report checks: `ts-ok` build entry has `"command": ["npx", "--no-install", "tsc", "--noEmit"]`,
+`"source": "config"` and `status: "pass"`; `ts-build-fail` build entry has `status: "fail"` and `TS2322` in its
+`output_tail`.
+
+Without `tsc` installed, Build shows `WARN` (`dependencies_missing`: "npx canceled due to missing packages"),
+never `FAIL`.
 
 ### js-detect
 
@@ -555,5 +600,6 @@ Nothing is installed or run: check with `--dry-run`. Expected lines after the pr
 A `package.json` that lists `eslint`, `jest` or `typescript` only under `devDependencies` detects nothing
 (see `devdeps-only`).
 
-TypeScript note: TS projects are the same `javascript` language entry. `tsconfig.json` is detected as a
-build (type-check) command; there is no separate TS fixture yet.
+TypeScript note: TS projects are the same `javascript` language entry. `ts-ok` and `ts-build-fail` run the
+`tsconfig.json` rule for real. A `jest` or `mocha` key in `package.json` declares that tool just like its
+config file does. A `typecheck` / `type-check` script is a build command.
