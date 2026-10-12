@@ -245,8 +245,8 @@ _VERSION_ARGS: dict[str, list[str]] = {
 # (project scripts, mvnw/gradlew wrappers) is never run a second time.
 _VERSION_RUNNERS = frozenset(
     {
-        "python", "python3", "py", "pip", "pytest", "tox", "nox", "poetry",
-        "uv", "pdm", "hatch",
+        "python", "python3", "py", "pip", "pytest", "ruff", "flake8", "pylint",
+        "mypy", "tox", "nox", "poetry", "uv", "pdm", "hatch",
         "node", "npm", "npx", "yarn", "pnpm", "bun", "deno",
         "java", "javac", "mvn", "gradle", "go", "dotnet", "cargo", "rustc",
         "php", "composer", "ruby", "bundle", "rake", "swift", "make", "cmake",

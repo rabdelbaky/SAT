@@ -34,6 +34,7 @@ Cross-platform: Python 3.11+, no third-party packages.
 
 from __future__ import annotations
 
+import configparser
 import fnmatch
 import json
 import shlex
@@ -221,14 +222,42 @@ def _pyproject_has_table(project_path: Path, dotted: str) -> bool:
     return True
 
 
+def _ini_has_section(project_path: Path, file_name: str, section: str) -> bool:
+    """Return True if INI-style *file_name* next to the build file has *section*.
+
+    Read-only.  A missing or unreadable/invalid file counts as no section.
+    """
+    path = project_path / file_name
+    if not path.is_file():
+        return False
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            parser.read_file(fh)
+    except (OSError, UnicodeDecodeError, configparser.Error):
+        return False
+    return parser.has_section(section)
+
+
 def _config_rule_matches(project_path: Path, rule: dict) -> bool:
     """Return True if the project declares the tool a config_commands rule names."""
     files = rule.get("files", [])
     if files and _has_config_file(project_path, files):
         return True
-    return any(
+    if any(
         _pyproject_has_table(project_path, t) for t in rule.get("pyproject_tables", [])
-    )
+    ):
+        return True
+    for pair in rule.get("ini_sections", []):
+        if not (
+            isinstance(pair, list)
+            and len(pair) == 2
+            and all(isinstance(x, str) for x in pair)
+        ):
+            continue
+        if _ini_has_section(project_path, pair[0], pair[1]):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +422,6 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
         .skipped_scripts — list[SkippedScript]
     """
     stage_names: dict[str, list[str]] = lang_cfg.get("stage_names", {})
-    config_files_map: dict[str, list[str]] = lang_cfg.get("config_files", {})
     stages: list[str] = lang_cfg.get("stages", [])
     language: str = project.language
 
@@ -442,7 +470,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     # --- Step 2: config-file detection --------------------------------
     # languages.toml may declare ``config_commands`` rules.  A rule fires only
     # for a stage that no script already covers, and only when the project
-    # itself declares the tool (config file or pyproject table).  Several
+    # itself declares the tool (config file, pyproject table or INI section).  Several
     # rules can fire for one stage (different tools); identical commands run
     # once.
     script_stages = {stage for stage in stages if commands[stage]}

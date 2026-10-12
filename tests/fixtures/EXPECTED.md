@@ -481,9 +481,12 @@ Runners are the executables of commands that actually ran (not skipped), one ent
 
 ## python-* (Session 10)
 
-Tiny stdlib-only Python projects. They need no installed packages: tests are `python -B -m unittest -q`,
-the "linter" is `python -B lint_check.py` (every `*.py` in the folder must parse), declared in each
-fixture's `pre-llm.toml`. `-B` keeps the fixture folder free of `__pycache__`. Python has **no build
+Tiny Python projects. The "linter" is `python -B lint_check.py` (every `*.py` in the folder must
+parse), declared in each fixture's `pre-llm.toml`. `python-ok` and `python-test-fail` run tests with
+the detected `pytest` (from `[tool.pytest.ini_options]` in their `pyproject.toml`, with
+`addopts = "-q -p no:cacheprovider"`), so they need `pytest` on PATH. The other run fixtures still
+use `python -B -m unittest -q` from `pre-llm.toml` and need no installed packages. `-B` keeps the
+fixture folder free of `__pycache__`. Python has **no build
 command**, so the Build cell is always `SKIP`. No fixture configures coverage, so Coverage is `SKIP`.
 Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python [untested]`.
 
@@ -497,7 +500,8 @@ Run each with `--path tests/fixtures/<name>`; the project is `.`, language `pyth
 
 Report checks: `projects[0].commands` has one entry per stage; lint on `python-no-linter` has
 `status: "no_linter_configured"`; `python-lint-fail` lint entry has `status: "fail"` and a non-empty `output_tail`
-naming `bad_syntax.py`.
+naming `bad_syntax.py`. On `python-ok` and `python-test-fail` the tests entry has `"command": ["pytest"]`
+and `"source": "config"`.
 
 ### python-detect
 
@@ -513,3 +517,16 @@ No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool
 
 Python has no `build` line. A `pyproject.toml` that lists `pytest` or `ruff` only as a dependency
 (and has no `[tool.*]` table) detects nothing.
+
+### python-detect-ini
+
+No `pyproject.toml` and no `pre-llm.toml`; the build file is `requirements.txt`. `setup.cfg` declares
+`[tool:pytest]`, `[flake8]` and `[coverage:run]`. Nothing is installed or run: check it with
+`--dry-run`. Expected lines (after the project line, which shows the full path, `python`,
+`requirements.txt` and `[untested]`), exactly these and no `build` line:
+
+```
+  lint: flake8 .  [config]
+  tests: pytest  [config]
+  coverage: pytest --cov --cov-report=xml  [config]
+```

@@ -7,7 +7,7 @@ extensions        = [".py"]
 build_files       = ["pyproject.toml", "requirements.txt"]
 build_priority    = ["pyproject.toml", "requirements.txt"]
 dep_folders       = []
-dep_error_phrases = ["ModuleNotFoundError", "No module named"]
+dep_error_phrases = ["ModuleNotFoundError", "No module named", "unrecognized arguments: --cov"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", ".coverage"]
 tested            = false
@@ -20,14 +20,7 @@ lint     = ["lint", "check", "flake8", "ruff", "mypy", "pylint"]
 tests    = ["test", "tests", "pytest"]
 coverage = ["coverage", "cov"]
 
-# config_files: presence of any of these files next to the build file means
-# the tool is configured (even if no script is defined).
-# Keys are stage names; values are lists of config file patterns.
-[language.python.config_files]
-lint     = ["pyproject.toml", ".flake8", "setup.cfg", ".pylintrc",
-            "ruff.toml", ".ruff.toml"]
-tests    = ["pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"]
-coverage = [".coveragerc", "pyproject.toml", "setup.cfg"]
+# Python declares its tools through config_commands below.
 
 # builtin_phases: commands that are always available for the build system,
 # require no script, no config, just the build tool.
@@ -38,13 +31,16 @@ tests    = []
 coverage = []
 
 # config_commands: the tool is run only when the project itself declares it,
-# either as a config file next to the build file ("files") or as a table in
-# pyproject.toml ("pyproject_tables").  A dev-dependency alone never counts.
+# either as a config file next to the build file ("files"), as a table in
+# pyproject.toml ("pyproject_tables"), or as a section in an INI-style file
+# next to the build file ("ini_sections": [[file name, section name], ...],
+# e.g. [tool:pytest] in setup.cfg).  A dev-dependency alone never counts.
 # Python has no build stage command (build = n/a).
 [[language.python.config_commands]]
 stage            = "tests"
 files            = ["pytest.ini"]
 pyproject_tables = ["tool.pytest"]
+ini_sections     = [["setup.cfg", "tool:pytest"], ["tox.ini", "pytest"]]
 command          = "pytest"
 
 [[language.python.config_commands]]
@@ -56,6 +52,7 @@ command          = "ruff check ."
 [[language.python.config_commands]]
 stage            = "lint"
 files            = [".flake8"]
+ini_sections     = [["setup.cfg", "flake8"], ["tox.ini", "flake8"]]
 command          = "flake8 ."
 
 [[language.python.config_commands]]
@@ -68,12 +65,14 @@ command          = "pylint --recursive=y ."
 stage            = "lint"
 files            = ["mypy.ini"]
 pyproject_tables = ["tool.mypy"]
+ini_sections     = [["setup.cfg", "mypy"]]
 command          = "mypy ."
 
 [[language.python.config_commands]]
 stage            = "coverage"
 files            = [".coveragerc"]
 pyproject_tables = ["tool.coverage"]
+ini_sections     = [["setup.cfg", "coverage:run"], ["tox.ini", "coverage:run"]]
 command          = "pytest --cov --cov-report=xml"
 
 
