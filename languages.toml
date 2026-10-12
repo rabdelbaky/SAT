@@ -502,8 +502,11 @@ command = "vendor/bin/phpunit --coverage-clover clover.xml"
 extensions        = [".rb"]
 build_files       = ["Gemfile"]
 build_priority    = ["Gemfile"]
-dep_folders       = ["vendor/bundle"]
-dep_error_phrases = ["cannot load such file", "LoadError"]
+# No dep_folders: most Ruby projects use system or user gems, so vendor/bundle is rarely present
+# and requiring it would mark almost every project dependencies_missing.
+dep_folders       = []
+dep_error_phrases = ["cannot load such file", "Could not find gem", "Bundler::GemNotFound",
+                     "Run `bundle install`"]
 stages            = ["lint", "tests", "coverage"]
 coverage_files    = ["coverage/.resultset.json"]
 tested            = false
@@ -525,6 +528,31 @@ build    = []
 lint     = []
 tests    = []
 coverage = []
+
+# config_commands: run through bundler, only when the project declares the tool.
+# A Gemfile that merely lists a gem does not count (SPEC section 3 step 3).
+# Coverage runs the specs under SimpleCov; a minitest project should set `coverage`
+# in pre-llm.toml.  The result is read from coverage/.resultset.json.
+[[language.ruby.config_commands]]
+stage   = "tests"
+files   = [".rspec"]
+command = "bundle exec rspec"
+
+[[language.ruby.config_commands]]
+stage   = "lint"
+files   = [".rubocop.yml", ".rubocop.yaml"]
+command = "bundle exec rubocop"
+
+[[language.ruby.config_commands]]
+stage   = "lint"
+files   = [".standard.yml"]
+command = "bundle exec standardrb"
+
+[[language.ruby.config_commands]]
+stage               = "coverage"
+files               = [".simplecov"]
+build_file_contains = ["simplecov"]
+command             = "bundle exec rspec"
 
 
 [language.swift]

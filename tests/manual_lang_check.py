@@ -47,6 +47,23 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "ruby": Lang(
+        tools=["ruby"],
+        execution={
+            "ruby-ok": ("SKIP", "PASS", "PASS", "SKIP", 0),
+            "ruby-test-fail": ("SKIP", "PASS", "FAIL", "SKIP", 1),
+            "ruby-lint-fail": ("SKIP", "FAIL", "PASS", "SKIP", 1),
+            "ruby-no-tests": ("SKIP", "PASS", "SKIP", "SKIP", 0),
+            "ruby-no-linter": ("SKIP", "WARN", "PASS", "SKIP", 0),
+        },
+        detect={
+            "ruby-detect": [
+                "lint: bundle exec rubocop  [config]",
+                "tests: bundle exec rspec  [config]",
+                "coverage: bundle exec rspec  [config]",
+            ]
+        },
+    ),
     "php": Lang(
         tools=["php"],
         execution={

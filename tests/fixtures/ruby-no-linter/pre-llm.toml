@@ -1,0 +1,3 @@
+[[project]]
+path = "."
+tests = "ruby test_calc.rb"

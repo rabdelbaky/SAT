@@ -1,0 +1,4 @@
+[[project]]
+path = "."
+lint = "ruby -c calc.rb"
+tests = "ruby test_calc.rb"

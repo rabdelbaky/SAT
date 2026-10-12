@@ -20,6 +20,7 @@ read_coverage_file(path) -> CoverageResult | None
       - Istanbul json-summary
                      (coverage-summary.json) — json
       - lcov         (lcov.info, *.lcov)
+      - SimpleCov (coverage/.resultset.json) — Ruby, lines and branches
       - Go cover profile (coverage.out, as written by
                        `go test -coverprofile`) — statement coverage, no branches
 
@@ -95,7 +96,7 @@ class CoverageResult:
         The path that was read, as a string (for the report).
     format:
         A short label: "jacoco", "cobertura", "istanbul", "lcov", "gocover",
-        "output".
+        "simplecov", "output".
     """
 
     line_pct: float
@@ -151,7 +152,9 @@ def _detect_format(path: Path) -> str:
     # Cobertura / Clover XML
     if name.endswith(".xml"):
         return "cobertura"
-    # Ruby SimpleCov .resultset.json — not a standard format we parse
+    # Ruby SimpleCov
+    if name == ".resultset.json":
+        return "simplecov"
     return "unknown"
 
 
@@ -452,6 +455,63 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     )
 
 
+def _read_simplecov(path: Path) -> Optional[CoverageResult]:
+    """Parse a SimpleCov .resultset.json and return a CoverageResult, or None.
+
+    Each top-level key is a command name (RSpec, Minitest, ...) holding
+    ``coverage`` -> {file: {"lines": [...], "branches": {...}}} (the old format
+    stores the line array directly).  Lines are merged across command names: a
+    line is covered if any command hit it; ``null`` lines are not relevant.
+    Branch coverage counts the leaf branch hit counts when present.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    merged: dict[str, list] = {}  # file -> merged line hits (None = not relevant)
+    branch_total = 0
+    branch_covered = 0
+    for command_set in data.values():
+        if not isinstance(command_set, dict):
+            continue
+        files = command_set.get("coverage")
+        if not isinstance(files, dict):
+            continue
+        for fname, entry in files.items():
+            lines = entry.get("lines") if isinstance(entry, dict) else entry
+            if not isinstance(lines, list):
+                continue
+            prev = merged.setdefault(fname, [None] * len(lines))
+            if len(prev) < len(lines):
+                prev.extend([None] * (len(lines) - len(prev)))
+            for i, hits in enumerate(lines):
+                if isinstance(hits, int) and not isinstance(hits, bool):
+                    prev[i] = hits if prev[i] is None else max(prev[i], hits)
+            if isinstance(entry, dict) and isinstance(entry.get("branches"), dict):
+                for arms in entry["branches"].values():
+                    if isinstance(arms, dict):
+                        for hits in arms.values():
+                            if isinstance(hits, int):
+                                branch_total += 1
+                                if hits > 0:
+                                    branch_covered += 1
+
+    relevant = [h for lines in merged.values() for h in lines if h is not None]
+    if not relevant:
+        return None
+    covered = sum(1 for h in relevant if h > 0)
+
+    return CoverageResult(
+        line_pct=round(covered / len(relevant) * 100.0, 2),
+        branch_pct=round(branch_covered / branch_total * 100.0, 2) if branch_total else None,
+        source_file=str(path),
+        format="simplecov",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public: parse one file
 # ---------------------------------------------------------------------------
@@ -475,6 +535,8 @@ def read_coverage_file(path: Path) -> Optional[CoverageResult]:
             return _read_lcov(path)
         if fmt == "gocover":
             return _read_gocover(path)
+        if fmt == "simplecov":
+            return _read_simplecov(path)
         # Unknown format: not a crash, just None
         return None
     except Exception:  # noqa: BLE001 – never crash on a file
@@ -498,6 +560,10 @@ _OUTPUT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"lines\.+:\s*(\d+(?:\.\d+)?)%", re.MULTILINE),
     # Generic "Lines: 85.0%" (some Cobertura text summaries)
     re.compile(r"Lines\s*:\s*(\d+(?:\.\d+)?)%", re.MULTILINE | re.IGNORECASE),
+    # SimpleCov console summary: "... 12 / 14 LOC (85.71%) covered."
+    re.compile(r"\((\d+(?:\.\d+)?)%\)\s+covered", re.MULTILINE),
+    # SimpleCov / Cobertura text: "Line Coverage: 91.2%"
+    re.compile(r"Line Coverage:\s*(\d+(?:\.\d+)?)%", re.MULTILINE),
     # Generic last-resort: any line ending in " 85%" or " 85.2%"
     re.compile(r"\b(\d+(?:\.\d+)?)%\s*$", re.MULTILINE),
 ]
