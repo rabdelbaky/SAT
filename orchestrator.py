@@ -107,7 +107,7 @@ class CommandRecord:
     # skipped | no_linter_configured | dependencies_missing
     duration_s: float
     output_tail: list[str]
-    log_path: Optional[str]  # relative forward-slash path, or None
+    log_path: Optional[str]  # absolute path (build_report relativises it), or None
     findings: None = None  # v1: always null
 
 
@@ -259,7 +259,8 @@ def _run_one(
         status=result.status,
         duration_s=result.duration_s,
         output_tail=result.output_tail,
-        log_path=_relative_path(log_path, repo_root),
+        # Absolute path; build_report makes it repo-relative with forward slashes.
+        log_path=str(log_path.absolute()),
         findings=None,
     )
 
@@ -414,6 +415,13 @@ def run_project(
                     result.warnings.append("dependencies_missing")
 
             stage_result.commands.append(record)
+
+            # --- tool_not_installed: warning, never a pass -------------
+            if record.status == "tool_not_installed":
+                if stage_result.status not in ("fail", "timeout"):
+                    stage_result.status = "tool_not_installed"
+                if "tool_not_installed" not in result.warnings:
+                    result.warnings.append("tool_not_installed")
 
             # Worst-wins for the stage
             if record.status in (

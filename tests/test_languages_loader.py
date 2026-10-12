@@ -110,3 +110,34 @@ def test_load_languages_error_message_contains_reason():
         str(path) in str(exc_info.value)
         or "languages.toml" in str(exc_info.value).lower()
     )
+
+
+# ---------------------------------------------------------------------------
+# dep_error_phrases only signal "packages are not installed" (SPEC §3.5)
+# ---------------------------------------------------------------------------
+
+# Text that shows up in ordinary build/test failures.  A dep_error_phrase that
+# matches any of these would turn a real code failure into a warning.
+_ORDINARY_FAILURE_TEXT = [
+    "BUILD FAILURE",
+    "npm ERR!",
+    "error[E",
+    "could not compile",
+    "fatal error:",
+    "No such file or directory",
+]
+
+
+@pytest.mark.parametrize("failure_text", _ORDINARY_FAILURE_TEXT)
+def test_no_dep_error_phrase_matches_ordinary_failure_text(failure_text):
+    languages = load_languages()
+    offenders = [
+        (name, phrase)
+        for name, entry in languages.items()
+        for phrase in entry.get("dep_error_phrases", [])
+        if failure_text in phrase or phrase in failure_text
+    ]
+    assert offenders == [], (
+        f"dep_error_phrases would match ordinary failure text "
+        f"{failure_text!r}: {offenders}"
+    )
