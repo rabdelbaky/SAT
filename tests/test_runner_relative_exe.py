@@ -68,7 +68,8 @@ def test_absolute_path_still_works(tmp_path):
 
 
 def test_bare_name_still_uses_path_lookup(tmp_path):
-    resolved = resolve_executable([Path(sys.executable).name, "-V"], tmp_path)
+    name = "cmd" if sys.platform == "win32" else "sh"  # always on PATH
+    resolved = resolve_executable([name, "-V"], tmp_path)
     assert resolved is not None and resolved[1:] == ["-V"]
 
 
