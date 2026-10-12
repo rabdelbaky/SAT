@@ -356,7 +356,8 @@ build_priority    = ["*.sln", "*.csproj"]
 dep_folders       = []
 dep_error_phrases = ["error NU", "Unable to find package"]
 stages            = ["build", "lint", "tests", "coverage"]
-coverage_files    = ["coverage.cobertura.xml"]
+# `dotnet test` writes TestResults/<guid>/coverage.cobertura.xml (in the test project folder).
+coverage_files    = ["**/TestResults/*/coverage.cobertura.xml"]
 tested            = false
 
 [language.csharp.stage_names]
@@ -370,11 +371,20 @@ lint     = [".editorconfig", ".stylecop", "StyleCop.Analyzers.json"]
 tests    = []
 coverage = ["coverlet.runsettings", "*.runsettings"]
 
+# `dotnet format --verify-no-changes` is read-only and ships with the SDK, so every
+# .NET project has a linter.  Coverage is not built-in: the collector only works when the
+# test project references coverlet.collector (see config_commands).
 [language.csharp.builtin_phases]
 build    = ["dotnet build", "msbuild"]
 lint     = ["dotnet format --verify-no-changes"]
 tests    = ["dotnet test"]
-coverage = ["dotnet test --collect:\"XPlat Code Coverage\""]
+coverage = []
+
+[[language.csharp.config_commands]]
+stage               = "coverage"
+build_file_contains = ["coverlet.collector"]
+files               = ["coverlet.runsettings", "*.runsettings"]
+command             = 'dotnet test --collect:"XPlat Code Coverage"'
 
 
 [language.rust]
