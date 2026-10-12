@@ -804,3 +804,45 @@ Rules shown:
 
 **Not verified by the author:** `php` is not installed on the machine these fixtures were written on. If a cell differs
 on your machine, that is a fixture bug.
+
+---
+
+## ruby-* (Session 18)
+
+Ruby has **no build stage**: the Build cell is always `SKIP`. Gems cannot be assumed, so the execution fixtures use the
+Ruby interpreter and the minitest that ships with it, through `pre-llm.toml`: `lint` = `ruby -c <file>` (syntax check),
+`tests` = `ruby test_calc.rb`. Requires `ruby` on PATH. Run with `--path <copy>`; the project is `.`, language
+`ruby [untested]`. Coverage is `SKIP`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `ruby-ok` | SKIP | PASS | PASS | SKIP | 0 | |
+| `ruby-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) == 6` |
+| `ruby-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `ruby -c bad.rb` reports a syntax error; `bad.rb` is not loaded by the tests |
+| `ruby-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no `.rspec`: tests stage skipped (`nothing_to_run`) |
+| `ruby-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no `.rubocop.yml` / `.standard.yml`: `no_linter_configured` |
+
+The author ran the three command pairs directly with Ruby 3.3: ok lint 0 / tests 0, test-fail lint 0 / tests 1,
+lint-fail lint 1 / tests 0.
+
+### ruby-detect
+
+`Gemfile` (lists rspec, rubocop and simplecov), `.rspec`, `.rubocop.yml`. Checked with `--dry-run`. Expected lines after
+the project line (no `build:` line):
+
+```
+  lint: bundle exec rubocop  [config]
+  tests: bundle exec rspec  [config]
+  coverage: bundle exec rspec  [config]
+```
+
+Rules shown:
+- Nothing is built-in for Ruby. A tool runs through bundler only when the project declares it with a config file
+  (`.rspec`, `.rubocop.yml`, `.standard.yml`, `.simplecov`); a Gemfile that merely lists a gem detects nothing.
+- Coverage runs the specs under SimpleCov (declared by `.simplecov` or `simplecov` in the Gemfile) and is read from
+  `coverage/.resultset.json`: lines (nulls are not relevant), branches when present, and several command names
+  merged by line. A minitest project should set `coverage` in `pre-llm.toml`. The console summaries
+  `... LOC (85.71%) covered.` and `Line Coverage: 91.2%` are the output fallback.
+- `vendor/bundle` is **not** required (it used to be, which marked almost every project `dependencies_missing`).
+  Missing gems are recognised by `Could not find gem`, `Bundler::GemNotFound`, `Run \`bundle install\``,
+  `cannot load such file`.
