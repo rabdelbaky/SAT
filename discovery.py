@@ -16,6 +16,12 @@ discover_projects(root, languages) -> list[Project]
     - Each file belongs to the nearest build file above it (sub-project wins
       over root). discover_projects does not assign files to projects; that is
       the concern of later stages.
+    - Exception: a Maven module or Gradle subproject is built by its root
+      build, so it is part of the root project, not a project of its own.
+      Data-driven: languages.toml ``subproject_rules`` maps the root's
+      primary build file to a rule (``maven_modules``: the root pom.xml lists
+      the folder in <module>; ``gradle_settings``: the root folder has a
+      settings.gradle(.kts) and the sub-folder has none).
     - One project per folder per language.  When a folder has multiple build
       files for the same language, the priority list in languages.toml
       determines the primary build file; all matching build files are kept in
@@ -29,6 +35,7 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import fnmatch
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -185,6 +192,7 @@ def discover_projects(
 
         projects.extend(_resolve_shared_build_files(found, languages, extra_skip))
 
+    projects = _drop_subprojects(projects, languages)
     projects.sort(key=lambda p: (str(p.path), p.language))
     return projects
 
@@ -232,6 +240,76 @@ def _resolve_shared_build_files(
             if _has_sources(p.path, languages[p.language].get("extensions", []), extra_skip)
         ]
         kept.extend(with_sources or group[:1])
+    return kept
+
+
+_GRADLE_SETTINGS = ("settings.gradle", "settings.gradle.kts")
+
+
+def _maven_modules(pom: Path) -> set[Path]:
+    """Return the resolved folders a pom.xml lists in <module> (any profile).
+
+    Read-only.  An unreadable or invalid pom lists nothing.  A module entry
+    may name a folder or a pom file inside it.
+    """
+    try:
+        tree = ET.parse(pom)
+    except (OSError, ET.ParseError):
+        return set()
+    folders: set[Path] = set()
+    for elem in tree.iter():
+        tag = elem.tag.rsplit("}", 1)[-1] if isinstance(elem.tag, str) else ""
+        if tag != "module" or not elem.text or not elem.text.strip():
+            continue
+        target = pom.parent / elem.text.strip()
+        if target.suffix == ".xml":
+            target = target.parent
+        folders.add(target.resolve())
+    return folders
+
+
+def _is_subproject_of(child: Project, root: Project, rule: str) -> bool:
+    """Return True if *root*'s own build builds *child* (see subproject_rules)."""
+    if rule == "maven_modules":
+        return (
+            child.primary_build_file == "pom.xml"
+            and child.path.resolve() in _maven_modules(root.path / root.primary_build_file)
+        )
+    if rule == "gradle_settings":
+        return (
+            child.primary_build_file.startswith("build.gradle")
+            and any((root.path / n).is_file() for n in _GRADLE_SETTINGS)
+            and not any((child.path / n).is_file() for n in _GRADLE_SETTINGS)
+        )
+    return False
+
+
+def _drop_subprojects(projects: list[Project], languages: dict) -> list[Project]:
+    """Remove Maven modules / Gradle subprojects that a root project builds.
+
+    A project is dropped when another project of the same language in an
+    ancestor folder claims it under that language's ``subproject_rules``
+    (keyed by the ancestor's primary build file).  Nested modules work
+    pair by pair: root -> a, a -> a/b.
+    """
+    kept: list[Project] = []
+    for child in projects:
+        rules: dict = languages.get(child.language, {}).get("subproject_rules", {})
+        claimed = False
+        if rules:
+            child_path = child.path.resolve()
+            for root in projects:
+                rule = rules.get(root.primary_build_file)
+                if (
+                    rule
+                    and root.language == child.language
+                    and root.path.resolve() in child_path.parents
+                    and _is_subproject_of(child, root, rule)
+                ):
+                    claimed = True
+                    break
+        if not claimed:
+            kept.append(child)
     return kept
 
 

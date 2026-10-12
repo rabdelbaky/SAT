@@ -29,8 +29,8 @@ Fixtures (10 to 13+) are tiny; ask the agent for several languages per session i
 ## Language checklist (a language becomes `tested` only when every applicable box is ticked)
 | Language | ok | build-fail | test-fail | lint-fail | no-tests | no-linter | Tested? |
 |---|---|---|---|---|---|---|---|
-| Python | [ ] | n/a | [ ] | [ ] | [ ] | [ ] | no |
-| JS/TS | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
+| Python | [x] | n/a | [x] | [x] | [x] | [x] | yes |
+| JS/TS | [x] | [x] | [x] | [x] | [x] | [x] | yes |
 | Java | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
 | Kotlin | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
 | Go | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | no |
