@@ -683,3 +683,36 @@ Without `.golangci.yml` the lint line is `lint: go vet ./...  [builtin]`.
 **Not verified by the author:** `go` is not installed on the machine these fixtures were written on; the Go sources and
 the expected cells are derived from the Go toolchain's documented behaviour. If a cell differs on your machine, that is a
 fixture bug to report.
+
+---
+
+## csharp-* (Session 15)
+
+C#/.NET projects need the .NET SDK, a target framework that matches the installed SDK, and NuGet restore, none of
+which can be assumed, so there are **no execution fixtures for C#** (the generic ok / build-fail / test-fail / lint-fail
+behaviour is covered by the other languages' fixtures through the same runner). C#-specific behaviour is detection and
+the coverage file location, checked by `tests/test_detection_csharp.py` and `--dry-run`.
+
+### csharp-detect
+
+`App.Tests.csproj` references `coverlet.collector`. Expected lines after the project line (language `csharp`):
+
+```
+  build: dotnet build  [builtin]
+  lint: dotnet format --verify-no-changes  [builtin]
+  tests: dotnet test  [builtin]
+  coverage: dotnet test --collect:XPlat Code Coverage  [config]
+```
+
+(the last argument is a single argument, `--collect:XPlat Code Coverage`; `--dry-run` joins arguments with spaces.)
+
+Rules shown:
+- `dotnet format --verify-no-changes` is read-only and ships with the SDK, so every .NET project has a linter
+  (*no-linter* is n/a).
+- Coverage is **not** built-in. It runs only when the project file references `coverlet.collector` or a `*.runsettings`
+  file sits next to it. A project without either has no coverage command (Coverage cell `SKIP`).
+- `.sln` wins over `.csproj` when both exist (both stay in `build_files`).
+- Coverage is read from `**/TestResults/*/coverage.cobertura.xml` (that is where `dotnet test` writes it, inside the test
+  project folder, in a fresh GUID folder per run); files from earlier runs are stale by mtime and ignored.
+
+**Not covered by fixtures:** a real `dotnet build` / `dotnet test` run. Try one by hand before marking C# `tested`.

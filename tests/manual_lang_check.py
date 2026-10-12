@@ -47,6 +47,16 @@ class Lang:
 
 
 LANGS: dict[str, Lang] = {
+    "csharp": Lang(
+        detect={
+            "csharp-detect": [
+                "build: dotnet build  [builtin]",
+                "lint: dotnet format --verify-no-changes  [builtin]",
+                "tests: dotnet test  [builtin]",
+                "coverage: dotnet test --collect:XPlat Code Coverage  [config]",
+            ]
+        }
+    ),
     "go": Lang(
         tools=["go"],
         execution={
