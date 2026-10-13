@@ -1,0 +1,15 @@
+# rust-ok
+## plan
+.  rust  Cargo.toml  [untested]
+  build: cargo build --workspace  [builtin]
+  lint: cargo clippy --workspace  [builtin]
+  tests: cargo test --workspace  [builtin]
+## ok
+cells: . PASS PASS PASS SKIP
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN SKIP
+exit: 0

@@ -1,0 +1,15 @@
+# php-unit-ok
+## plan
+.  php  composer.json  [untested]
+  lint: vendor/bin/phpcs  [config]
+  tests: vendor/bin/phpunit --no-coverage --do-not-cache-result  [config]
+  coverage: vendor/bin/phpunit --do-not-cache-result --coverage-clover clover.xml  [config]
+## ok
+cells: . SKIP PASS PASS WARN
+exit: 0
+## fail
+cells: . SKIP FAIL FAIL FAIL
+exit: 1
+## missing
+cells: . SKIP WARN WARN WARN
+exit: 0

@@ -1,0 +1,14 @@
+# python-ok
+## plan
+.  python  pyproject.toml
+  lint: python -B lint_check.py  [override]
+  tests: pytest  [config]
+## ok
+cells: . SKIP PASS PASS SKIP
+exit: 0
+## fail
+cells: . SKIP FAIL FAIL SKIP
+exit: 1
+## missing
+cells: . SKIP WARN WARN SKIP
+exit: 0

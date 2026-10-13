@@ -1,0 +1,15 @@
+# ruby-rspec-ok
+## plan
+.  ruby  Gemfile
+  lint: bundle exec rubocop  [config]
+  tests: bundle exec rspec  [config]
+  coverage: bundle exec rspec  [config]
+## ok
+cells: . SKIP PASS PASS WARN
+exit: 0
+## fail
+cells: . SKIP FAIL FAIL FAIL
+exit: 1
+## missing
+cells: . SKIP WARN WARN WARN
+exit: 0

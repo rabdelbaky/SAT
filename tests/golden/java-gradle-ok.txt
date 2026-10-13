@@ -1,0 +1,16 @@
+# java-gradle-ok
+## plan
+.  java  build.gradle
+  build: gradle assemble  [builtin]
+  lint: gradle checkstyleMain  [config]
+  tests: gradle test  [builtin]
+  coverage: gradle jacocoTestReport  [config]
+## ok
+cells: . PASS PASS PASS WARN
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN WARN
+exit: 0

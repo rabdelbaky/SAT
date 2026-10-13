@@ -1,0 +1,16 @@
+# kotlin-gradle-ok
+## plan
+.  kotlin  build.gradle.kts
+  build: gradle assemble  [builtin]
+  lint: gradle detekt  [config]
+  tests: gradle test  [builtin]
+  coverage: gradle jacocoTestReport  [config]
+## ok
+cells: . PASS PASS PASS WARN
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN WARN
+exit: 0

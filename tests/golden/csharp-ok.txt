@@ -1,0 +1,16 @@
+# csharp-ok
+## plan
+.  csharp  App.sln
+  build: dotnet build App.sln  [builtin]
+  lint: dotnet format App.sln --verify-no-changes  [builtin]
+  tests: dotnet test App.sln  [builtin]
+  coverage: dotnet test App.sln --collect:XPlat Code Coverage  [config]
+## ok
+cells: . PASS PASS SKIP WARN
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN WARN
+exit: 0

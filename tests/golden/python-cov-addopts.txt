@@ -1,0 +1,14 @@
+# python-cov-addopts
+## plan
+.  python  pyproject.toml
+  tests: pytest  [config]
+  coverage: pytest --cov-report=xml  [config]
+## ok
+cells: . SKIP WARN PASS WARN
+exit: 0
+## fail
+cells: . SKIP WARN FAIL FAIL
+exit: 1
+## missing
+cells: . SKIP WARN WARN WARN
+exit: 0

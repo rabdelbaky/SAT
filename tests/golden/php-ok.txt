@@ -1,0 +1,14 @@
+# php-ok
+## plan
+.  php  composer.json  [untested]
+  lint: php -l calc.php  [override]
+  tests: php run_tests.php  [override]
+## ok
+cells: . SKIP PASS PASS SKIP
+exit: 0
+## fail
+cells: . SKIP FAIL FAIL SKIP
+exit: 1
+## missing
+cells: . SKIP WARN WARN SKIP
+exit: 0

@@ -1,0 +1,16 @@
+# java-maven-ok
+## plan
+.  java  pom.xml
+  build: mvn compile  [builtin]
+  lint: mvn checkstyle:check  [config]
+  tests: mvn test  [builtin]
+  coverage: mvn jacoco:report  [config]
+## ok
+cells: . PASS PASS PASS WARN
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN WARN
+exit: 0

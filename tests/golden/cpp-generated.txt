@@ -1,0 +1,14 @@
+# cpp-generated
+## plan
+.  cpp  CMakeLists.txt  [untested]
+  build: cmake --build .  [builtin]
+  tests: ctest --output-on-failure  [builtin]
+## ok
+cells: . PASS WARN PASS SKIP
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN SKIP
+exit: 0

@@ -1,0 +1,16 @@
+# go-golangci-ok
+## plan
+.  go  go.mod
+  build: go build -o /dev/null ./...  [builtin]
+  lint: golangci-lint run --fix=false  [config]
+  tests: go test ./...  [builtin]
+  coverage: go test -coverprofile=coverage.out ./...  [builtin]
+## ok
+cells: . PASS PASS PASS WARN
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN WARN
+exit: 0

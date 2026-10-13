@@ -1,0 +1,15 @@
+# js-ok
+## plan
+.  javascript  package.json
+  build: npm run build  [script:build]
+  lint: npm run lint  [script:lint]
+  tests: npm run test  [script:test]
+## ok
+cells: . PASS PASS PASS SKIP
+exit: 0
+## fail
+cells: . FAIL SKIP SKIP SKIP
+exit: 1
+## missing
+cells: . WARN WARN WARN SKIP
+exit: 0
