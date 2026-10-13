@@ -38,7 +38,7 @@ build/
 dist/                                 ← SKIPPED (dist is a skip folder)
 ```
 
-**Expected projects** (4 total, ordered by path):
+**Expected projects** (5 total, ordered by path):
 
 | Path (relative to fixture root) | Language   | Primary build file   | All build_files                           | tested   |
 |---------------------------------|------------|----------------------|-------------------------------------------|----------|

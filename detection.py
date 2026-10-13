@@ -39,6 +39,7 @@ import fnmatch
 import json
 import re
 import shlex
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -671,8 +672,10 @@ def load_pre_llm_toml(path: Path) -> PreLlmConfig:
     Returns an empty PreLlmConfig if the file does not exist.
 
     Raises:
-        PreLlmTomlError: if the file exists but contains invalid TOML or
-            unknown keys.
+        PreLlmTomlError: if the file exists but contains invalid TOML,
+            unknown keys, or a value of the wrong type (``ignore`` a list of
+            strings; ``path`` and every stage command a string).  The message
+            names the key.
     """
     if not path.exists():
         return PreLlmConfig()
@@ -680,8 +683,10 @@ def load_pre_llm_toml(path: Path) -> PreLlmConfig:
     try:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise PreLlmTomlError(f"malformed pre-llm.toml: {exc}") from exc
+    except OSError as exc:
+        raise PreLlmTomlError(f"cannot read pre-llm.toml: {exc}") from exc
 
     # Validate top-level keys.
     unknown = set(data.keys()) - _ALLOWED_TOP_LEVEL_KEYS
@@ -712,6 +717,16 @@ def load_pre_llm_toml(path: Path) -> PreLlmConfig:
             raise PreLlmTomlError(
                 f"pre-llm.toml: [[project]][{i}] missing required key 'path'"
             )
+        if not isinstance(proj["path"], str):
+            raise PreLlmTomlError(
+                f"pre-llm.toml: [[project]][{i}]: path must be a string"
+            )
+        for stage in ("build", "lint", "tests", "coverage"):
+            if stage in proj and not isinstance(proj[stage], str):
+                raise PreLlmTomlError(
+                    f'pre-llm.toml: [[project]] "{proj["path"]}": '
+                    f"{stage} must be a string"
+                )
         overrides.append(
             ProjectOverride(
                 path=proj["path"],
@@ -730,6 +745,23 @@ def load_pre_llm_toml(path: Path) -> PreLlmConfig:
 # ---------------------------------------------------------------------------
 
 
+def _split_override(value: str) -> list[str]:
+    """Split an override command string into an argument list (see apply_overrides)."""
+    if sys.platform == "win32":
+        try:
+            parts = shlex.split(value, posix=False)
+        except ValueError:
+            parts = value.split()
+        return [
+            a[1:-1] if len(a) >= 2 and a.startswith('"') and a.endswith('"') else a
+            for a in parts
+        ]
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return value.split()
+
+
 def apply_overrides(
     result: DetectionResult, override: ProjectOverride
 ) -> DetectionResult:
@@ -738,15 +770,17 @@ def apply_overrides(
     Only stages explicitly set in *override* are replaced.  Stages set to
     None in *override* are left unchanged.  The source of every replaced
     command is set to ``"override"``.
+
+    On Windows (checked at call time) the value is split with
+    ``shlex.split(posix=False)``, so backslashes in paths survive
+    (``pytest tests\\unit``), then one pair of surrounding double quotes is
+    stripped from each argument.
     """
     new_commands: dict[str, list[StageCommand]] = {}
     for stage, cmds in result.commands.items():
         override_value: str | None = getattr(override, stage, None)
         if override_value is not None:
-            try:
-                argv = shlex.split(override_value)
-            except ValueError:
-                argv = override_value.split()
+            argv = _split_override(override_value)
             new_commands[stage] = [StageCommand(command=argv, source="override")]
         else:
             new_commands[stage] = list(cmds)

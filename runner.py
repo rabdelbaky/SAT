@@ -55,6 +55,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from masking import mask_secrets
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -96,23 +98,9 @@ def _mask_literal_secrets(text: str, secrets: list[str]) -> str:
     return text
 
 
-# Also import the pattern-based masker from pre_llm_checks so the runner
-# applies the same masking rules as the report writer.
-try:
-    # Allow the module to be imported even when pre_llm_checks is not on sys.path
-    _module_dir = Path(__file__).parent
-    if str(_module_dir) not in sys.path:
-        sys.path.insert(0, str(_module_dir))
-    from pre_llm_checks import mask_secrets as _pattern_mask_secrets
-except ImportError:  # pragma: no cover – standalone use
-
-    def _pattern_mask_secrets(text: str) -> str:  # type: ignore[misc]
-        return text
-
-
 def _mask(text: str, secrets: list[str]) -> str:
     """Apply both pattern-based masking and literal secret replacement."""
-    text = _pattern_mask_secrets(text)
+    text = mask_secrets(text)
     text = _mask_literal_secrets(text, secrets)
     return text
 

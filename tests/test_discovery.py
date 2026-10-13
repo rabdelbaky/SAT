@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from discovery import discover_projects, Project
+from discovery import discover_projects, discovery_warnings, Project
 from pre_llm_checks import load_languages
 
 # ---------------------------------------------------------------------------
@@ -295,3 +295,114 @@ def test_project_has_tested_attribute():
     for p in result:
         assert hasattr(p, "tested"), f"Project missing .tested: {p}"
         assert isinstance(p.tested, bool)
+
+
+# ---------------------------------------------------------------------------
+# ignore: a name skips every folder with that name, a path only that path
+# ---------------------------------------------------------------------------
+
+
+def _write(root: Path, rel: str, text: str = "") -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _legacy_tree(root: Path) -> None:
+    _write(root, "a/legacy/package.json", "{}")
+    _write(root, "b/legacy/package.json", "{}")
+
+
+def test_ignore_path_with_slash_skips_only_that_path(tmp_path):
+    _legacy_tree(tmp_path)
+    projects = discover_projects(tmp_path, LANGUAGES, ignore=["a/legacy"])
+    rels = sorted(p.path.relative_to(tmp_path).as_posix() for p in projects)
+    assert rels == ["b/legacy"]
+
+
+def test_ignore_name_without_slash_skips_every_folder_with_that_name(tmp_path):
+    _legacy_tree(tmp_path)
+    assert discover_projects(tmp_path, LANGUAGES, ignore=["legacy"]) == []
+
+
+# ---------------------------------------------------------------------------
+# discovery_warnings: no_project and unsupported_extension
+# ---------------------------------------------------------------------------
+
+
+def _warnings(root: Path, ignore: list[str] | None = None) -> list[tuple[str, str]]:
+    projects = discover_projects(root, LANGUAGES, ignore=ignore)
+    return discovery_warnings(root, LANGUAGES, projects, ignore=ignore)
+
+
+def test_no_project_reported_once_per_folder(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "index.js")  # owned by the root JS project
+    _write(tmp_path, "tools/a.py")  # no python project anywhere
+    _write(tmp_path, "tools/b.py")
+    _write(tmp_path, "tools/deep/c.py")
+    assert _warnings(tmp_path) == [
+        ("no_project", "tools"),
+        ("no_project", "tools/deep"),
+    ]
+
+
+def test_no_project_only_for_the_files_language(tmp_path):
+    # A Go project above does not own Python files.
+    _write(tmp_path, "go.mod", "module x\n")
+    _write(tmp_path, "main.go")
+    _write(tmp_path, "scripts/run.py")
+    assert _warnings(tmp_path) == [("no_project", "scripts")]
+
+
+def test_no_project_at_root_is_dot(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "stray.py")
+    assert _warnings(tmp_path) == [("no_project", ".")]
+
+
+def test_files_in_a_project_or_its_subfolders_are_not_no_project():
+    projects = discover_projects(FIXTURE_MONOREPO, LANGUAGES)
+    assert discovery_warnings(FIXTURE_MONOREPO, LANGUAGES, projects) == []
+
+
+def test_gradle_scripts_are_not_kotlin_sources(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "tools/settings.gradle.kts")
+    assert _warnings(tmp_path) == []
+
+
+def test_unsupported_extension_reported_once_per_folder(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "scripts/a.lua")
+    _write(tmp_path, "scripts/b.scala")
+    _write(tmp_path, "stats/model.R")  # compared lower-case
+    assert _warnings(tmp_path) == [
+        ("unsupported_extension", "scripts"),
+        ("unsupported_extension", "stats"),
+    ]
+
+
+@pytest.mark.parametrize("ext", [".scala", ".dart", ".ex", ".lua", ".r", ".pl", ".hs"])
+def test_each_unsupported_extension_is_reported(tmp_path, ext):
+    _write(tmp_path, f"x/file{ext}")
+    assert _warnings(tmp_path) == [("unsupported_extension", "x")]
+
+
+def test_discovery_warnings_respect_skip_list_and_ignore(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "node_modules/pkg/x.py")
+    _write(tmp_path, "node_modules/pkg/x.lua")
+    _write(tmp_path, "gen/y.py")
+    _write(tmp_path, "a/old/z.dart")
+    _write(tmp_path, "b/old/z.dart")
+    assert _warnings(tmp_path, ignore=["gen", "a/old"]) == [
+        ("unsupported_extension", "b/old"),
+    ]
+
+
+def test_discovery_warnings_empty_for_clean_repo(tmp_path):
+    _write(tmp_path, "package.json", "{}")
+    _write(tmp_path, "src/index.ts")
+    _write(tmp_path, "README.md")
+    assert _warnings(tmp_path) == []

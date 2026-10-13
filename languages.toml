@@ -175,7 +175,7 @@ extensions        = [".java"]
 build_files       = ["pom.xml", "build.gradle", "build.gradle.kts"]
 build_priority    = ["pom.xml", "build.gradle", "build.gradle.kts"]
 dep_folders       = []
-dep_error_phrases = ["Could not resolve dependencies", "Could not resolve artifact", "Could not resolve all dependencies", "Could not resolve all files"]
+dep_error_phrases = ["Could not resolve dependencies", "Could not resolve artifact", "Could not resolve all dependencies", "Could not resolve all files", "Could not resolve all artifacts"]
 stages            = ["build", "lint", "tests", "coverage"]
 # Maven jacoco:report, Gradle jacocoTestReport.  Gradle writes the XML only
 # when the build file enables it (reports { xml.required = true }).
@@ -279,7 +279,7 @@ extensions        = [".kt", ".kts"]
 build_files       = ["build.gradle", "build.gradle.kts"]
 build_priority    = ["build.gradle.kts", "build.gradle"]
 dep_folders       = []
-dep_error_phrases = ["Could not resolve dependencies", "Could not resolve artifact", "Could not resolve all dependencies", "Could not resolve all files"]
+dep_error_phrases = ["Could not resolve dependencies", "Could not resolve artifact", "Could not resolve all dependencies", "Could not resolve all files", "Could not resolve all artifacts"]
 stages            = ["build", "lint", "tests", "coverage"]
 # Gradle jacocoTestReport writes the XML only when the build file enables it
 # (reports { xml.required = true }).

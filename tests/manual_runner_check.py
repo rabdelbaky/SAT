@@ -139,6 +139,16 @@ def _pid_alive(pid: int) -> bool:
         # WAIT_TIMEOUT (0x102) means still alive; WAIT_OBJECT_0 (0) means terminated
         return result == 0x102
     else:
+        # Linux: a zombie (killed, not yet reaped by its parent) still answers
+        # os.kill(pid, 0) but is dead.  /proc/<pid>/stat: "pid (comm) S ...".
+        stat = Path(f"/proc/{pid}/stat")
+        if sys.platform.startswith("linux") and stat.exists():
+            try:
+                state = stat.read_text().rsplit(")", 1)[1].split()[0]
+            except (OSError, IndexError):
+                state = ""
+            if state == "Z":
+                return False
         try:
             os.kill(pid, 0)
             return True

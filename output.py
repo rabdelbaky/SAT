@@ -2,9 +2,12 @@
 
 Public API
 ----------
-render_terminal(results, repo_root, *, verbose=False) -> str
+render_terminal(results, repo_root, *, verbose=False, repo_warnings=None) -> str
     The human-readable result: a table (one row per project), then optional
     Commands (verbose), Details, Warnings sections, then a one-line Summary.
+    *repo_warnings* are (where, warning) pairs not tied to a project, listed
+    after the project warnings as ``  <where>: <warning>`` (e.g.
+    ``(repo): gitignore_missing``, ``tools: no_project``).
     See tests/fixtures/EXPECTED.md ("terminal-table") for the exact format.
 
 cell_text(stage_result) -> str
@@ -36,6 +39,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from masking import mask_secrets
 from orchestrator import CommandRecord, ProjectResult, StageResult
 
 _STAGES = ("build", "lint", "tests", "coverage")
@@ -126,7 +130,8 @@ def _join(cols: list[str], widths: list[int]) -> str:
 
 
 def _command_text(rec: CommandRecord) -> str:
-    return " ".join(rec.command) if rec.command else ""
+    """The command as shown to the user, secrets masked."""
+    return mask_secrets(" ".join(rec.command)) if rec.command else ""
 
 
 def _display_log_path(log_path: str, repo_root: Path) -> str:
@@ -144,7 +149,8 @@ def _detail(pr: ProjectResult, st: StageResult, word: str, repo_root: Path) -> s
             return "no linter configured"
         for rec in st.commands:
             if rec.status == "tool_not_installed":
-                return f"tool not installed: {rec.command[0] if rec.command else '?'}"
+                exe = mask_secrets(rec.command[0]) if rec.command else "?"
+                return f"tool not installed: {exe}"
         if st.status == "dependencies_missing" or any(
             r.status == "dependencies_missing" for r in st.commands
         ):
@@ -165,6 +171,7 @@ def render_terminal(
     repo_root: Path,
     *,
     verbose: bool = False,
+    repo_warnings: Optional[list[tuple[str, str]]] = None,
 ) -> str:
     """Return the full terminal report for *results* (ends with a newline)."""
     rows = [
@@ -212,6 +219,8 @@ def render_terminal(
     for pr, row in zip(results, rows):
         for w in pr.warnings:
             warn_lines.append(f"  {row[0]}: {w}")
+    for where, w in repo_warnings or []:
+        warn_lines.append(f"  {where}: {w}")
     if len(warn_lines) > 1:
         sections.append(warn_lines)
 

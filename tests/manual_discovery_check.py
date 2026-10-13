@@ -7,6 +7,8 @@ Exit code: 0 if all pass, 1 if any fail.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,7 +20,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from discovery import discover_projects
 from pre_llm_checks import load_languages
 
-FIXTURE = Path(__file__).parent / "fixtures" / "monorepo"
+# git never stores a .git folder inside the fixture, so every check runs on a
+# temp copy that has a .git/pyproject.toml (which must not become a project).
+_SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "monorepo"
+_TMP = Path(tempfile.mkdtemp(prefix="pre-llm-discovery-"))
+atexit.register(shutil.rmtree, _TMP, ignore_errors=True)
+FIXTURE = _TMP / "monorepo"
+shutil.copytree(_SOURCE_FIXTURE, FIXTURE)
+(FIXTURE / ".git").mkdir(exist_ok=True)
+(FIXTURE / ".git" / "pyproject.toml").write_text(
+    '[project]\nname = "not-a-project"\n', encoding="utf-8"
+)
 SCRIPT = Path(__file__).parent.parent / "pre_llm_checks.py"
 LANGUAGES = load_languages()
 
@@ -84,7 +96,11 @@ check("monorepo: build/ skipped", len(leaked) == 0, str(leaked))
 # ---------------------------------------------------------------------------
 
 leaked = [p for p in projects if ".git" in p.path.parts]
-check("monorepo: .git skipped", len(leaked) == 0, str(leaked))
+check(
+    "monorepo: .git skipped (no project from .git/pyproject.toml)",
+    len(leaked) == 0,
+    str(leaked),
+)
 
 # ---------------------------------------------------------------------------
 # Check 5: root JS project found

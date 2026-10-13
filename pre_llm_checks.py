@@ -17,7 +17,11 @@ import sys
 import tomllib
 from pathlib import Path
 
-from discovery import discover_projects as _do_discover_projects, Project
+from discovery import (
+    discover_projects as _do_discover_projects,
+    discovery_warnings,
+    Project,
+)
 from detection import (
     detect_commands,
     load_pre_llm_toml,
@@ -25,6 +29,7 @@ from detection import (
     PreLlmTomlError,
     DetectionResult,
 )
+from masking import mask_secrets
 from output import collect_environment, probe_version, render_terminal
 from orchestrator import (
     OrchestratorOptions,
@@ -115,56 +120,6 @@ def parse_duration(value: str) -> int:
     minutes = int(m.group(2) or 0)
     seconds = int(m.group(3) or 0)
     return hours * 3600 + minutes * 60 + seconds
-
-
-# ---------------------------------------------------------------------------
-# Secret masking
-# ---------------------------------------------------------------------------
-
-# Patterns that identify secrets. Each pattern replaces the captured value
-# group (group 1) with "***".
-_SECRET_PATTERNS: list[re.Pattern[str]] = [
-    # Bearer / token headers
-    re.compile(r"(Bearer\s+)\S+", re.IGNORECASE),
-    # KEY=value or TOKEN=value assignments (env-var style)
-    re.compile(
-        r"(?i)((?:api[_\-]?key|secret[_\-]?key|access[_\-]?key|auth[_\-]?token|"
-        r"api[_\-]?secret|password|passwd|token|aws[_\-]access[_\-]key(?:[_\-]id)?|"
-        r"private[_\-]?key)\s*[:=]\s*)\S+",
-    ),
-    # URL with password: scheme://user:password@host
-    re.compile(r"(://[^:/@\s]+:)[^@\s]+(@)", re.IGNORECASE),
-    # Query-string api_key / apikey / token params
-    re.compile(r"(?i)([?&](?:api_key|apikey|token|secret|password)=)[^\s&\"']+"),
-]
-
-
-def mask_secrets(text: str) -> str:
-    """Return *text* with secrets replaced by ``***``.
-
-    Covers: Bearer tokens, API keys, passwords, connection-string credentials,
-    and common env-var assignments.
-    """
-    for pattern in _SECRET_PATTERNS:
-        # Replace only the value portion (captured groups) while keeping
-        # surrounding syntax (e.g. "Bearer ", "TOKEN=", "://user:").
-        # We use a lambda so we can reconstruct the non-secret parts.
-        def _replace(m: re.Match[str], _p: re.Pattern[str] = pattern) -> str:
-            groups = m.groups()
-            if not groups:
-                return "***"
-            full = m.group(0)
-            result = full
-            # For patterns with a trailing group (e.g. the "@" in URL passwords)
-            # we need to preserve prefix + suffix around the secret.
-            if len(groups) == 1:
-                result = groups[0] + "***"
-            elif len(groups) == 2:
-                result = groups[0] + "***" + groups[1]
-            return result
-
-        text = pattern.sub(_replace, text)
-    return text
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +214,13 @@ def _build_command_entry(
 
     source = cmd.get("source")
 
+    # Mask what the AI reads; the command that ran is never changed.
+    command = cmd.get("command")
+    if command is not None:
+        command = [mask_secrets(arg) for arg in command]
+
     entry: dict = {
-        "command": cmd.get("command"),
+        "command": command,
         "scripts": cmd.get("scripts"),
         "source": source,
         "status": cmd.get("status"),
@@ -286,6 +246,7 @@ def build_report(
     *,
     status: str = "pass",
     environment: dict | None = None,
+    warnings: list[str] | None = None,
 ) -> dict:
     """Assemble and return the full report dict (not yet written to disk).
 
@@ -296,6 +257,9 @@ def build_report(
         tail_lines: maximum output_tail lines per command.
         status: overall status string for ``summary.status``.
         environment: optional ``{"os": ..., "runners": {...}}`` block (SPEC §6).
+        warnings: repo-level warnings (``gitignore_missing``,
+            ``no_project: <folder>``, ...) for the top-level ``warnings`` list;
+            always present, empty when there are none.
 
     Returns:
         Ordered dict ready for JSON serialisation.
@@ -312,6 +276,8 @@ def build_report(
         proj_entry: dict = {
             "path": proj_path,
             "language": proj.get("language"),
+            "build_files": list(proj.get("build_files") or []),
+            "skipped_scripts": list(proj.get("skipped_scripts") or []),
             "commands": cmds_out,
         }
         if proj.get("warnings"):
@@ -326,6 +292,7 @@ def build_report(
             "status": status,
             "project_count": len(projects_data),
         },
+        "warnings": list(warnings or []),
         "projects": projects_out,
     }
     if environment is not None:
@@ -521,15 +488,93 @@ def _validate_path(path: Path) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# .gitignore (SPEC §2: the only file the tool may change, only with --add-gitignore)
+# ---------------------------------------------------------------------------
+
+_GITIGNORE_LINE = ".pre-llm/"
+
+
+def _gitignore_covers(text: str) -> bool:
+    """Return True if a .gitignore line names the .pre-llm folder."""
+    for line in text.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith(("#", "!")):
+            continue
+        entry = entry.removeprefix("**/").lstrip("/")
+        if entry.rstrip("/") == ".pre-llm" or entry.startswith(".pre-llm/"):
+            return True
+    return False
+
+
+def _read_gitignore(path: Path) -> str | None:
+    """Return the .gitignore text, "" if missing, None if it cannot be read."""
+    if not path.exists():
+        return ""
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _add_gitignore(path: Path) -> None:
+    """Create *path* with ``.pre-llm/``, or append that line if not covered.
+
+    Touches nothing else: existing content is kept byte for byte; a newline is
+    added first only when the file does not end with one.
+    """
+    if not path.exists():
+        path.write_bytes((_GITIGNORE_LINE + "\n").encode("utf-8"))
+        return
+    data = path.read_bytes()
+    if _gitignore_covers(data.decode("utf-8")):
+        return
+    prefix = b"" if not data or data.endswith(b"\n") else b"\n"
+    with open(path, "ab") as fh:
+        fh.write(prefix + (_GITIGNORE_LINE + "\n").encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def _write_empty_report(
+    output_path: Path,
+    root: Path,
+    status: str,
+    warnings: list[str] | None = None,
+) -> None:
+    """Write a report with ``projects: []`` (early exits: error or no_project)."""
+    try:
+        report = build_report(
+            projects_data=[],
+            repo_root=root,
+            tail_lines=1,
+            status=status,
+            environment=collect_environment([]),
+            warnings=warnings,
+        )
+        write_report(report, output_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not write report: {exc}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Known before any check, so every return below writes a report (SPEC §6).
+    output_path = Path(args.output)
+    if not output_path.is_absolute():
+        output_path = Path.cwd() / output_path
 
     # Parse requested steps; reject unknown names before doing anything else.
     steps = [s.strip() for s in args.steps.split(",") if s.strip()]
     for step in steps:
         if step not in _VALID_STEPS:
             print(f"ERROR: unknown step: {step}", file=sys.stderr)
+            _write_empty_report(output_path, Path.cwd(), "error")
             return 2
 
     root = Path(args.path).resolve()
@@ -541,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     err = _validate_path(root)
     if err is not None:
         print(err, file=sys.stderr)
+        _write_empty_report(output_path, root, "error")
         return 2
 
     # Allow tests (and advanced users) to override the languages.toml path.
@@ -551,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
         languages = load_languages(languages_toml)
     except LanguagesLoadError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        _write_empty_report(output_path, root, "error")
         return 2
 
     # Load pre-llm.toml (optional; lives at repo root).
@@ -559,13 +606,25 @@ def main(argv: list[str] | None = None) -> int:
         pre_llm_cfg = load_pre_llm_toml(config_path)
     except PreLlmTomlError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        _write_empty_report(output_path, root, "error")
         return 2
 
     # Discover projects, honouring the ignore list from pre-llm.toml.
     projects = _discover_projects(root, languages, ignore=pre_llm_cfg.ignore)
 
+    # no_project / unsupported_extension: (warning, folder) pairs.
+    found_warnings = discovery_warnings(
+        root, languages, projects, ignore=pre_llm_cfg.ignore
+    )
+
     if not projects:
         print("No supported projects found.", file=sys.stderr)
+        _write_empty_report(
+            output_path,
+            root,
+            "no_project",
+            warnings=[f"{w}: {folder}" for w, folder in found_warnings],
+        )
         return 3
 
     # Build a mapping from normalised project path → override (if any).
@@ -583,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             override_map[ov_path] = ov
 
     if args.dry_run:
-        _print_dry_run(projects, languages, override_map)
+        _print_dry_run(projects, languages, override_map, root=root)
         return 0
 
     orch_opts = OrchestratorOptions(
@@ -598,29 +657,41 @@ def main(argv: list[str] | None = None) -> int:
         verbose=args.verbose,
     )
 
-    output_path = Path(args.output)
-    if not output_path.is_absolute():
-        output_path = Path.cwd() / output_path
-
     # Logs live in <repo root>/.pre-llm/logs/ (SPEC §6); the .gitignore that
     # must cover them is the repo root's.
     pre_llm_dir = root / ".pre-llm"
     gitignore_path = root / ".gitignore"
-    if not gitignore_path.exists():
+    gitignore_missing = False
+    if args.add_gitignore:
+        try:
+            _add_gitignore(gitignore_path)
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"WARNING: could not update .gitignore: {exc}", file=sys.stderr)
+            gitignore_missing = True
+    elif not gitignore_path.exists():
         print(
             "WARNING: .gitignore missing — logs will not be gitignored.",
             file=sys.stderr,
         )
+        gitignore_missing = True
     else:
-        try:
-            content = gitignore_path.read_text(encoding="utf-8")
-            if ".pre-llm" not in content:
-                print(
-                    "WARNING: .pre-llm not in .gitignore — logs will not be gitignored.",
-                    file=sys.stderr,
-                )
-        except OSError:
-            pass
+        content = _read_gitignore(gitignore_path)
+        if content is not None and not _gitignore_covers(content):
+            print(
+                "WARNING: .pre-llm not in .gitignore — logs will not be gitignored.",
+                file=sys.stderr,
+            )
+            gitignore_missing = True
+
+    # Repo-level warnings: (where, warning) for the terminal, strings for the report.
+    terminal_warnings: list[tuple[str, str]] = []
+    report_warnings: list[str] = []
+    if gitignore_missing:
+        terminal_warnings.append(("(repo)", "gitignore_missing"))
+        report_warnings.append("gitignore_missing")
+    for w, folder in found_warnings:
+        terminal_warnings.append((folder, w))
+        report_warnings.append(f"{w}: {folder}")
 
     was_interrupted = False
     results = []
@@ -655,7 +726,15 @@ def main(argv: list[str] | None = None) -> int:
     # Human-readable table (stdout).  Never allowed to change the exit code.
     try:
         if results:
-            print(render_terminal(results, root, verbose=args.verbose), flush=True)
+            print(
+                render_terminal(
+                    results,
+                    root,
+                    verbose=args.verbose,
+                    repo_warnings=terminal_warnings,
+                ),
+                flush=True,
+            )
     except Exception as exc:  # noqa: BLE001
         print(f"WARNING: could not print results table: {exc}", file=sys.stderr)
 
@@ -672,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
             tail_lines=args.tail_lines,
             status=summary_status,
             environment=environment,
+            warnings=report_warnings,
         )
         write_report(report, output_path)
     except Exception as exc:  # noqa: BLE001
@@ -698,9 +778,13 @@ def _print_dry_run(
     projects: list[Project],
     languages: dict,
     override_map: dict | None = None,
+    *,
+    root: Path,
 ) -> None:
     """Print per-project, per-stage: each command that would run with its source,
-    then any skipped scripts with reasons.
+    then any skipped scripts with reasons.  Commands are shown with secrets
+    masked; project paths are relative to *root* with forward slashes (``.``
+    for the root), like the table.
 
     Format (SPEC §11 --dry-run):
       <project_path>  <language>  <build_files>  [untested]
@@ -715,7 +799,10 @@ def _print_dry_run(
     for p in projects:
         build_files_str = ", ".join(p.build_files)
         untested = "  [untested]" if not p.tested else ""
-        print(f"{p.path}  {p.language}  {build_files_str}{untested}")
+        print(
+            f"{make_relative_path(p.path, root)}  {p.language}  "
+            f"{build_files_str}{untested}"
+        )
 
         lang_cfg = languages.get(p.language, {})
         result: DetectionResult = detect_commands(p, lang_cfg)
@@ -729,7 +816,7 @@ def _print_dry_run(
         for stage in lang_cfg.get("stages", []):
             cmds = result.commands.get(stage, [])
             for cmd in cmds:
-                argv_str = " ".join(cmd.command)
+                argv_str = mask_secrets(" ".join(cmd.command))
                 print(f"  {stage}: {argv_str}  [{cmd.source}]")
 
         # Print skipped scripts.

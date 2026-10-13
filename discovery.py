@@ -2,7 +2,8 @@
 
 Public API
 ----------
-discover_projects(root, languages) -> list[Project]
+discover_projects(root, languages, ignore=None) -> list[Project]
+discovery_warnings(root, languages, projects, ignore=None) -> list[tuple[str, str]]
 solution_projects(solution) -> set[Path]
 
     Walk *root*, skipping the folders listed in SKIP_DIRS, and return one
@@ -32,6 +33,19 @@ solution_projects(solution) -> set[Path]
       Project.build_files.
     - Languages and build files come from languages.toml (passed in as
       *languages* dict), not hard-coded.
+    - ``ignore`` (pre-llm.toml): an entry without ``/`` skips every folder
+      with that name; an entry with ``/`` skips only that path relative to
+      *root* (``a/legacy`` skips a/legacy, not b/legacy).
+
+    discovery_warnings returns repo-level warnings as (name, folder) pairs,
+    folder relative to *root* with forward slashes (``.`` for the root), once
+    per folder and name:
+    - ``no_project``: the folder has a file with a supported language's
+      extension that belongs to no project of that language (no project of
+      that language in the folder or above it).
+    - ``unsupported_extension``: the folder has a file with one of
+      UNSUPPORTED_EXTENSIONS (common languages with no languages.toml entry).
+    Both respect the skip list and ``ignore``.
 
 Cross-platform: Python 3.11+, no third-party packages.
 """
@@ -72,6 +86,13 @@ SKIP_DIRS: frozenset[str] = frozenset(
         # SwiftPM keeps dependency checkouts (each with its own Package.swift) here
         ".build",
     }
+)
+
+
+# Common source extensions of languages with no languages.toml entry
+# (unsupported_extension warning).  Compared lower-case, so .R counts as .r.
+UNSUPPORTED_EXTENSIONS: tuple[str, ...] = (
+    ".scala", ".dart", ".ex", ".lua", ".r", ".pl", ".hs",
 )
 
 
@@ -161,9 +182,9 @@ def discover_projects(
         values contain at least ``build_files`` (list[str]) and
         ``build_priority`` (list[str]), and ``tested`` (bool).
     ignore:
-        Optional list of folder names (relative to *root*) to skip, as read
-        from pre-llm.toml ``ignore``.  These are added to the built-in
-        SKIP_DIRS for this walk only.
+        Optional pre-llm.toml ``ignore`` list, added to the built-in SKIP_DIRS
+        for this walk only.  An entry without ``/`` is a folder name skipped
+        anywhere; an entry with ``/`` is a path relative to *root*.
 
     Returns
     -------
@@ -171,10 +192,10 @@ def discover_projects(
         Projects sorted by (path, language) for deterministic output.
         Returns an empty list if no supported build files are found.
     """
-    extra_skip: frozenset[str] = frozenset(ignore) if ignore else frozenset()
+    extra_skip, skip_paths = _split_ignore(root, ignore)
     projects: list[Project] = []
 
-    for folder, dirnames, _ in _walk_skipping(root, extra_skip=extra_skip):
+    for folder, dirnames, _ in _walk_skipping(root, extra_skip, skip_paths):
         folder_path = Path(folder)
         found: list[Project] = []
 
@@ -198,7 +219,9 @@ def discover_projects(
                 )
             )
 
-        projects.extend(_resolve_shared_build_files(found, languages, extra_skip))
+        projects.extend(
+            _resolve_shared_build_files(found, languages, extra_skip, skip_paths)
+        )
 
     projects = _drop_subprojects(projects, languages)
     projects.sort(key=lambda p: (str(p.path), p.language))
@@ -210,15 +233,25 @@ def discover_projects(
 _BUILD_SCRIPT_SUFFIXES = (".gradle", ".gradle.kts")
 
 
-def _has_sources(folder: Path, extensions: list[str], extra_skip: frozenset[str]) -> bool:
+def _is_source(name: str, extensions: tuple[str, ...]) -> bool:
+    """True if *name* ends with one of *extensions* and is not a Gradle script."""
+    return name.endswith(extensions) and not name.endswith(_BUILD_SCRIPT_SUFFIXES)
+
+
+def _has_sources(
+    folder: Path,
+    extensions: list[str],
+    extra_skip: frozenset[str],
+    skip_paths: frozenset[Path] = frozenset(),
+) -> bool:
     """Return True if *folder* contains a source file with one of *extensions*.
 
     Skipped folders and build scripts do not count.
     """
     wanted = tuple(extensions)
-    for _, _, filenames in _walk_skipping(folder, extra_skip=extra_skip):
+    for _, _, filenames in _walk_skipping(folder, extra_skip, skip_paths):
         for name in filenames:
-            if name.endswith(wanted) and not name.endswith(_BUILD_SCRIPT_SUFFIXES):
+            if _is_source(name, wanted):
                 return True
     return False
 
@@ -227,6 +260,7 @@ def _resolve_shared_build_files(
     found: list[Project],
     languages: dict,
     extra_skip: frozenset[str],
+    skip_paths: frozenset[Path] = frozenset(),
 ) -> list[Project]:
     """Resolve languages that claim the same primary build file in one folder.
 
@@ -245,7 +279,9 @@ def _resolve_shared_build_files(
         with_sources = [
             p
             for p in group
-            if _has_sources(p.path, languages[p.language].get("extensions", []), extra_skip)
+            if _has_sources(
+                p.path, languages[p.language].get("extensions", []), extra_skip, skip_paths
+            )
         ]
         kept.extend(with_sources or group[:1])
     return kept
@@ -412,16 +448,88 @@ def _drop_subprojects(projects: list[Project], languages: dict) -> list[Project]
     return kept
 
 
-def _walk_skipping(root: Path, extra_skip: frozenset[str] = frozenset()):
-    """os.walk equivalent that skips SKIP_DIRS and *extra_skip* in-place.
+def _split_ignore(
+    root: Path, ignore: list[str] | None
+) -> tuple[frozenset[str], frozenset[Path]]:
+    """Split pre-llm.toml ``ignore`` into folder names and root-relative paths.
+
+    An entry with ``/`` (or ``\\``) is a path relative to *root* (``legacy/``
+    too); the result holds ``root / entry`` so it compares with the paths
+    os.walk yields.
+    """
+    names: set[str] = set()
+    paths: set[Path] = set()
+    for entry in ignore or []:
+        normalised = entry.replace("\\", "/")
+        cleaned = normalised.strip("/")
+        if not cleaned:
+            continue
+        if "/" in normalised:
+            paths.add(root / Path(cleaned))
+        else:
+            names.add(cleaned)
+    return frozenset(names), frozenset(paths)
+
+
+def _walk_skipping(
+    root: Path,
+    extra_skip: frozenset[str] = frozenset(),
+    skip_paths: frozenset[Path] = frozenset(),
+):
+    """os.walk equivalent that skips SKIP_DIRS, *extra_skip* and *skip_paths*.
 
     Yields (dirpath_str, dirnames, filenames) just like os.walk, but never
-    descends into any directory whose name is in SKIP_DIRS or *extra_skip*.
+    descends into a directory whose name is in SKIP_DIRS or *extra_skip*, or
+    whose path is in *skip_paths*.
     """
     import os
 
     combined = SKIP_DIRS | extra_skip
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune skip dirs in-place so os.walk does not descend into them.
-        dirnames[:] = [d for d in dirnames if d not in combined]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in combined and Path(dirpath, d) not in skip_paths
+        ]
         yield dirpath, dirnames, filenames
+
+
+def discovery_warnings(
+    root: Path,
+    languages: dict,
+    projects: list[Project],
+    ignore: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Return ``(warning, folder)`` pairs for ``no_project`` and ``unsupported_extension``.
+
+    *projects* is what :func:`discover_projects` returned for the same *root*,
+    *languages* and *ignore*.  *folder* is relative to *root* with forward
+    slashes (``"."`` for the root).  One pair per folder and warning, sorted.
+    """
+    extra_skip, skip_paths = _split_ignore(root, ignore)
+    project_dirs: dict[str, list[Path]] = {}
+    for p in projects:
+        project_dirs.setdefault(p.language, []).append(Path(p.path))
+
+    def owned(folder: Path, language: str) -> bool:
+        return any(
+            d == folder or d in folder.parents for d in project_dirs.get(language, [])
+        )
+
+    found: set[tuple[str, str]] = set()
+    for dirpath, _, filenames in _walk_skipping(root, extra_skip, skip_paths):
+        folder = Path(dirpath)
+        rel = folder.relative_to(root).as_posix() or "."
+        for lang_name, lang_cfg in languages.items():
+            extensions = tuple(lang_cfg.get("extensions", []))
+            if (
+                extensions
+                and any(_is_source(n, extensions) for n in filenames)
+                and not owned(folder, lang_name)
+            ):
+                found.add(("no_project", rel))
+                break
+        if any(n.lower().endswith(UNSUPPORTED_EXTENSIONS) for n in filenames):
+            found.add(("unsupported_extension", rel))
+    return sorted(found, key=lambda w: (w[1], w[0]))

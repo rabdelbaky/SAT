@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "summary": {
+    "status": "no_project",
+    "project_count": 0
+  },
+  "warnings": [],
+  "projects": [],
+  "environment": {
+    "os": "Darwin 25.6.0",
+    "runners": {}
+  }
+}

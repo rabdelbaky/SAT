@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from coverage_readers import CoverageData, read_project_coverage
-from detection import DetectionResult, StageCommand
+from detection import DetectionResult, SkippedScript, StageCommand
 from discovery import Project
 from runner import displayed_command, run_command, CommandResult
 
@@ -147,6 +147,7 @@ class ProjectResult:
     stages: list[StageResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     interrupted: bool = False
+    skipped_scripts: list[SkippedScript] = field(default_factory=list)
 
     def stage_status(self, stage: str) -> Optional[str]:
         for s in self.stages:
@@ -373,7 +374,9 @@ def run_project(
     Sets result.interrupted=True and returns the partial result on Ctrl+C.
     Never raises.
     """
-    result = ProjectResult(project=project)
+    result = ProjectResult(
+        project=project, skipped_scripts=list(detection.skipped_scripts)
+    )
     stages_order: list[str] = lang_cfg.get(
         "stages", ["build", "lint", "tests", "coverage"]
     )
@@ -697,7 +700,9 @@ def project_results_to_report_data(
     """Convert orchestrator results into the format expected by build_report().
 
     Each project dict has:
-        path, language, commands (flat list across all stages), coverage (optional)
+        path, language, build_files (repo-relative, forward slashes),
+        skipped_scripts ([{"name", "reason"}]), commands (flat list across
+        all stages), warnings, coverage (optional)
     """
     projects_data: list[dict] = []
     for pr in results:
@@ -765,6 +770,13 @@ def project_results_to_report_data(
         proj_entry: dict = {
             "path": pr.project.path,
             "language": pr.project.language,
+            "build_files": [
+                _relative_path(pr.project.path / bf, repo_root)
+                for bf in pr.project.build_files
+            ],
+            "skipped_scripts": [
+                {"name": s.name, "reason": s.reason} for s in pr.skipped_scripts
+            ],
             "commands": cmds_out,
             "warnings": pr.warnings,
         }

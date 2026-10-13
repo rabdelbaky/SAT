@@ -521,3 +521,72 @@ def test_override_for_nonexistent_path_does_not_raise():
     # Should not raise; the override simply has nothing to apply to
     new_result = apply_overrides(result, override)
     assert isinstance(new_result, DetectionResult)
+
+
+# ---------------------------------------------------------------------------
+# Cycle 17: Windows override splitting keeps backslashes
+# ---------------------------------------------------------------------------
+
+
+def _override_tests_argv(value: str) -> list[str]:
+    from detection import ProjectOverride
+
+    result = DetectionResult(commands={"tests": []})
+    new_result = apply_overrides(result, ProjectOverride(path=".", tests=value))
+    return new_result.commands["tests"][0].command
+
+
+def test_apply_overrides_windows_keeps_backslashes(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _override_tests_argv(r"pytest tests\unit") == ["pytest", "tests\\unit"]
+
+
+def test_apply_overrides_windows_strips_one_pair_of_quotes(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    argv = _override_tests_argv(r'"C:\Program Files\py.exe" -k "a b"')
+    assert argv == ["C:\\Program Files\\py.exe", "-k", "a b"]
+
+
+def test_apply_overrides_posix_unchanged(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _override_tests_argv(r"pytest tests\unit") == ["pytest", "testsunit"]
+    assert _override_tests_argv('pytest -k "a b"') == ["pytest", "-k", "a b"]
+
+
+# ---------------------------------------------------------------------------
+# Cycle 18: load_pre_llm_toml — value types
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ('ignore = "legacy"\n', "ignore"),
+        ("ignore = [1]\n", "ignore"),
+        ("[[project]]\npath = 5\n", "[[project]][0]: path must be a string"),
+        ('[[project]]\npath = "a"\ntests = 5\n', 'pre-llm.toml: [[project]] "a": tests must be a string'),
+        ('[[project]]\npath = "a"\nbuild = ["make"]\n', '[[project]] "a": build must be a string'),
+        ('[[project]]\npath = "a"\nlint = true\n', '[[project]] "a": lint must be a string'),
+        ('[[project]]\npath = "a"\ncoverage = {cmd = "x"}\n', '[[project]] "a": coverage must be a string'),
+    ],
+)
+def test_load_pre_llm_toml_wrong_type_raises_naming_key(tmp_path, content, message):
+    from detection import PreLlmTomlError
+
+    bad = tmp_path / "pre-llm.toml"
+    bad.write_text(content, encoding="utf-8")
+    with pytest.raises(PreLlmTomlError) as exc_info:
+        load_pre_llm_toml(bad)
+    assert message in str(exc_info.value)
+
+
+def test_load_pre_llm_toml_string_values_accepted(tmp_path):
+    good = tmp_path / "pre-llm.toml"
+    good.write_text(
+        'ignore = ["legacy"]\n[[project]]\npath = "a"\nbuild = "make"\ntests = "pytest"\n',
+        encoding="utf-8",
+    )
+    cfg = load_pre_llm_toml(good)
+    assert cfg.ignore == ["legacy"]
+    assert cfg.overrides[0].build == "make"
+    assert cfg.overrides[0].tests == "pytest"

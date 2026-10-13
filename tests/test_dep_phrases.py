@@ -57,8 +57,10 @@ _ORDINARY_FAILURES = {
 
 # Output of genuinely missing dependencies: these must be recognised.
 _MISSING_DEPENDENCIES = {
-    "java": ["[ERROR] Failed to execute goal on project x: Could not resolve dependencies for project x"],
-    "kotlin": ["> Could not resolve all files for configuration ':compileClasspath'."],
+    "java": ["[ERROR] Failed to execute goal on project x: Could not resolve dependencies for project x",
+             "> Could not resolve all artifacts for configuration ':classpath'."],
+    "kotlin": ["> Could not resolve all files for configuration ':compileClasspath'.",
+               "> Could not resolve all artifacts for configuration ':classpath'."],
     "rust": ["error: failed to download from `https://static.crates.io/crates/itoa/1.0.18/download`",
              "  unable to update registry `crates-io`", "  unable to update https://github.com/dtolnay/itoa",
              "note: offline mode (via `--offline`) can sometimes cause surprising resolution failures",
