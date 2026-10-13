@@ -45,7 +45,7 @@ dist/                                 ← SKIPPED (dist is a skip folder)
 | `.`                             | javascript | `package.json`       | `["package.json"]`                        | false    |
 | `packages/api`                  | javascript | `package.json`       | `["package.json"]`                        | false    |
 | `packages/ui`                   | javascript | `package.json`       | `["package.json"]`                        | false    |
-| `services/ml`                   | python     | `pyproject.toml`     | `["pyproject.toml", "requirements.txt"]`  | false    |
+| `services/ml`                   | python     | `pyproject.toml`     | `["pyproject.toml", "requirements.txt"]`  | true     |
 | `services/worker`               | go         | `go.mod`             | `["go.mod"]`                              | false    |
 
 **Total: 5 projects**
@@ -69,17 +69,19 @@ dist/                                 ← SKIPPED (dist is a skip folder)
 - `services/worker/main.go` belongs to `services/worker` (go).
 - `services/ml/train.py` belongs to `services/ml` (python).
 
-**--dry-run output** (one line per project, format: `<path>  <language>  <build_files>  [untested]`):
+**--dry-run output** (one line per project, format: `<path>  <language>  <build_files>  [untested]`;
+the `[untested]` suffix is left off for a tested language):
 
 ```
-.  javascript  package.json  [untested]
-packages/api  javascript  package.json  [untested]
-packages/ui  javascript  package.json  [untested]
-services/ml  python  pyproject.toml, requirements.txt  [untested]
+.  javascript  package.json
+packages/api  javascript  package.json
+packages/ui  javascript  package.json
+services/ml  python  pyproject.toml, requirements.txt
 services/worker  go  go.mod  [untested]
 ```
 
-*(All languages are `[untested]` until fixtures pass; exact whitespace may vary.)*
+*(Python is tested since Session 10, JavaScript since Session 11 and Java since Session 12; the others are `[untested]`
+until their fixtures pass; exact whitespace may vary.)*
 
 **No-project exit code**: running the tool against an empty folder must exit 3
 and print `No supported projects found.` to stderr.
@@ -481,11 +483,15 @@ Runners are the executables of commands that actually ran (not skipped), one ent
 
 ## python-* (Session 10)
 
-Tiny stdlib-only Python projects. They need no installed packages: tests are `python -B -m unittest -q`,
-the "linter" is `python -B lint_check.py` (every `*.py` in the folder must parse), declared in each
-fixture's `pre-llm.toml`. `-B` keeps the fixture folder free of `__pycache__`. Python has **no build
+Tiny Python projects. The "linter" is `python -B lint_check.py` (every `*.py` in the folder must
+parse), declared in each fixture's `pre-llm.toml`. `python-ok` and `python-test-fail` run tests with
+the detected `pytest` (from `[tool.pytest.ini_options]` in their `pyproject.toml`, with
+`addopts = "-q -p no:cacheprovider"`), so they need `pytest` on PATH. The other run fixtures still
+use `python -B -m unittest -q` from `pre-llm.toml` and need no installed packages. `-B` keeps the
+fixture folder free of `__pycache__`. Python has **no build
 command**, so the Build cell is always `SKIP`. No fixture configures coverage, so Coverage is `SKIP`.
-Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python [untested]`.
+Run each with `--path tests/fixtures/<name>`; the project is `.`, language `python` (tested, so no
+`[untested]` label).
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -497,13 +503,14 @@ Run each with `--path tests/fixtures/<name>`; the project is `.`, language `pyth
 
 Report checks: `projects[0].commands` has one entry per stage; lint on `python-no-linter` has
 `status: "no_linter_configured"`; `python-lint-fail` lint entry has `status: "fail"` and a non-empty `output_tail`
-naming `bad_syntax.py`.
+naming `bad_syntax.py`. On `python-ok` and `python-test-fail` the tests entry has `"command": ["pytest"]`
+and `"source": "config"`.
 
 ### python-detect
 
 No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool.ruff]` and
 `[tool.coverage.run]`. Nothing is installed or run: check it with `--dry-run`. Expected lines
-(after the project line, which shows the full path, `python`, `pyproject.toml` and `[untested]`):
+(after the project line, which shows the full path, `python` and `pyproject.toml`):
 
 ```
   lint: ruff check .  [config]
@@ -514,6 +521,19 @@ No `pre-llm.toml`. `pyproject.toml` declares `[tool.pytest.ini_options]`, `[tool
 Python has no `build` line. A `pyproject.toml` that lists `pytest` or `ruff` only as a dependency
 (and has no `[tool.*]` table) detects nothing.
 
+### python-detect-ini
+
+No `pyproject.toml` and no `pre-llm.toml`; the build file is `requirements.txt`. `setup.cfg` declares
+`[tool:pytest]`, `[flake8]` and `[coverage:run]`. Nothing is installed or run: check it with
+`--dry-run`. Expected lines (after the project line, which shows the full path, `python` and
+`requirements.txt`), exactly these and no `build` line:
+
+```
+  lint: flake8 .  [config]
+  tests: pytest  [config]
+  coverage: pytest --cov --cov-report=xml  [config]
+```
+
 ---
 
 ## js-* (Session 11)
@@ -522,10 +542,10 @@ Tiny JavaScript projects that need **no `npm install`**: they use only Node buil
 `package.json`: `build` = `node --check calc.js` (syntax check), `lint` = `node lint-check.js`
 (fails on a `debugger` statement), `test` = `node --test`. Requires `node` and `npm` on PATH.
 
-JavaScript projects are skipped as `dependencies_missing` when `node_modules` does not exist, and this
-repo does not commit `node_modules`. **Create an empty `node_modules` folder in a copy of the fixture
-before running** (`tests/manual_js_check.py` does this). Run with `--path <copy>`; the project is `.`,
-language `javascript [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+The fixtures declare no packages (no `dependencies` / `devDependencies` / `optionalDependencies` /
+`peerDependencies`), so the `node_modules` check does not apply and no `node_modules` folder is needed.
+Only `js-missing-deps` declares a package. Run with `--path tests/fixtures/<name>` (or a copy); the
+project is `.`, language `javascript` (tested since Session 11, so no `[untested]` label). No fixture configures coverage, so Coverage is `SKIP`.
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -535,9 +555,34 @@ language `javascript [untested]`. No fixture configures coverage, so Coverage is
 | `js-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `debugger;` in `calc.js`; lint output names `calc.js:2: no-debugger`; tests still run |
 | `js-no-tests` | PASS | PASS | SKIP | SKIP | 0 | no `test` script, no test config: tests stage skipped (`nothing_to_run`) |
 | `js-no-linter` | PASS | WARN | PASS | SKIP | 0 | no `lint` script, no lint config: `no_linter_configured` |
+| `js-bad-require` | PASS | PASS | FAIL | SKIP | 1 | test requires `./calcx.js`, which does not exist: a code bug, so FAIL, not a warning |
+| `js-missing-deps` | SKIP | SKIP | SKIP | SKIP | 0 | declares `left-pad`, no `node_modules`: every stage skipped, warning `dependencies_missing` |
+| `js-missing-deps` + empty `node_modules` | PASS | WARN | WARN | SKIP | 0 | half-done install: test prints `Cannot find module 'left-pad'` -> `dependencies_missing` |
 
 Report checks: `js-no-linter` lint entry has `status: "no_linter_configured"`; `js-build-fail` build entry is `fail`
 and its lint/tests/coverage entries have `reason: "build_gate"`; `js-lint-fail` lint `output_tail` names `calc.js`.
+`js-bad-require` tests entry has `status: "fail"` and its `output_tail` names `calcx`. `js-missing-deps` (no
+`node_modules`): the build, lint, tests and coverage entries each have a `reason` starting with
+`dependencies_missing`, and the project's `warnings` list contains `dependencies_missing`. `js-missing-deps` with an
+empty `node_modules`: tests entry has `status: "dependencies_missing"` and its `output_tail` names `left-pad`.
+
+### ts-ok, ts-build-fail
+
+TypeScript through the detected config rule: no scripts, `package.json` is bare, and `tsconfig.json` gives the
+build command `npx --no-install tsc --noEmit` (`source: "config"`). Needs `tsc` on PATH
+(`npm install -g typescript`). `tsc --noEmit` writes no files.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `ts-ok` | PASS | WARN | SKIP | SKIP | 0 | no linter, no tests configured |
+| `ts-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `TS2322` in the build `output_tail` |
+
+Report checks: `ts-ok` build entry has `"command": ["npx", "--no-install", "tsc", "--noEmit"]`,
+`"source": "config"` and `status: "pass"`; `ts-build-fail` build entry has `status: "fail"` and `TS2322` in its
+`output_tail`.
+
+Without `tsc` installed, Build shows `WARN` (`dependencies_missing`: "npx canceled due to missing packages"),
+never `FAIL`.
 
 ### js-detect
 
@@ -555,8 +600,9 @@ Nothing is installed or run: check with `--dry-run`. Expected lines after the pr
 A `package.json` that lists `eslint`, `jest` or `typescript` only under `devDependencies` detects nothing
 (see `devdeps-only`).
 
-TypeScript note: TS projects are the same `javascript` language entry. `tsconfig.json` is detected as a
-build (type-check) command; there is no separate TS fixture yet.
+TypeScript note: TS projects are the same `javascript` language entry. `ts-ok` and `ts-build-fail` run the
+`tsconfig.json` rule for real. A `jest` or `mocha` key in `package.json` declares that tool just like its
+config file does. A `typecheck` / `type-check` script is a build command.
 
 ---
 
@@ -565,9 +611,9 @@ build (type-check) command; there is no separate TS fixture yet.
 Tiny Java projects that need **no Maven, Gradle or network**: each has a bare `pom.xml` (it makes the folder a
 Java project) and a `pre-llm.toml` that replaces the build tool with the JDK:
 `build` = `javac -d out Calc.java CalcTest.java`, `tests` = `java -cp out CalcTest`,
-`lint` = `java LintCheck.java` (fails on a `FIXME` marker). Requires `javac` and `java` (JDK 11+) on PATH.
+`lint` = `java LintCheck.java` (fails on a `FIXME` marker). Requires `javac` and `java` (JDK 17+) on PATH.
 `out/` is ignored by a `.gitignore` in each fixture. Run with `--path <copy>`; the project is `.`,
-language `java [untested]`. No fixture configures coverage, so Coverage is `SKIP`.
+language `java` (tested since Session 12, so no `[untested]` label). No fixture configures coverage, so Coverage is `SKIP`.
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -577,9 +623,63 @@ language `java [untested]`. No fixture configures coverage, so Coverage is `SKIP
 | `java-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `// FIXME` in `Calc.java`; lint output names `Calc.java:3: no-fixme`; tests still run |
 | `java-no-linter` | PASS | WARN | PASS | SKIP | 0 | bare `pom.xml`, no checkstyle/pmd/spotbugs plugin, no lint config: `no_linter_configured` |
 
-**No `java-no-tests` fixture (n/a for Java).** Maven and Gradle have a built-in `test` phase, so a Java project
-always has a tests command (`mvn test` / `gradle test`); a project with zero tests is a successful run decided
-by the build tool, not by this tool. Checklist cell: `n/a`.
+### Real Maven and Gradle runs
+
+These run the real build tools. Requires `mvn` and `gradle` on PATH, a JDK 17 or newer, and internet access the
+first time (Maven and Gradle download the fixture's plugins and libraries into their own cache; this tool
+installs nothing). If `gradle` is not on PATH, `tests/manual_java_check.py` shows the Gradle rows as `SKIP` (not run) and
+counts them separately; they never count as passed. `java-maven-ok` and `java-gradle-ok` are the same tiny project (`demo.Calc` with `add` and
+`sub`, one JUnit 5 test for `add`) built by Maven or Gradle. Both declare checkstyle (one rule from
+`checkstyle.xml`: no `FIXME` comments) and JaCoCo (Gradle with `xml.required = true`). Coverage is
+1 of 3 lines (`add`; `sub` and the class line are not run) = `33.3%`.
+
+The other rows are **variants** that `tests/manual_java_check.py` makes in a temp copy of the `-ok` fixture:
+- `build-fail`: in `Calc.java`, `return a + b;` becomes `return a + ;`
+- `test-fail`: in `CalcTest.java`, `assertEquals(5,` becomes `assertEquals(6,`
+- `lint-fail`: a `// FIXME check overflow` line is added above `sub` in `Calc.java`
+- `no-tests`: the `src/test` folder is deleted
+
+| Run | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `java-maven-ok` | PASS | PASS | PASS | 33.3% | 0 | build `mvn compile`; coverage from `target/site/jacoco/jacoco.xml` |
+| `java-maven-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | a compile error is `fail`, never `dependencies_missing` |
+| `java-maven-test-fail` | PASS | PASS | FAIL | 33.3% | 1 | tests output names `CalcTest` |
+| `java-maven-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `mvn checkstyle:check` output names `Calc.java` |
+| `java-maven-no-tests` | PASS | PASS | SKIP | WARN | 0 | `No tests to run.`: tests `skipped`, reason `no_tests_found`; no coverage data |
+| `java-maven-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below); `lib` has no tests, `app` has one |
+| `java-gradle-ok` | PASS | PASS | PASS | 33.3% | 0 | build `gradle assemble`; coverage from `build/reports/jacoco/test/jacocoTestReport.xml` |
+| `java-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | |
+| `java-gradle-test-fail` | PASS | PASS | FAIL | 33.3% | 1 | the build stage does not run tests, so a test failure shows under Tests |
+| `java-gradle-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `gradle checkstyleMain` output names `Calc.java` |
+| `java-gradle-no-tests` | PASS | PASS | SKIP | WARN | 0 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found` |
+| `java-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below) |
+
+**No tests.** A Java project always has a tests command (`mvn test` / `gradle test`). When it passes but ran no
+test (languages.toml `no_tests_patterns` match the full log and `tests_ran_patterns` do not), the Tests cell is
+`SKIP` and the report entry is `status: skipped`, `reason: no_tests_found`, not a `PASS` with nothing behind it.
+
+**Multi-module.** `java-maven-multi` (root `pom.xml` lists modules `lib` and `app`; `app` depends on `lib`) and
+`java-gradle-multi` (`settings.gradle` includes `lib` and `app`) are reported as **one** project `.`: a Maven module
+or Gradle subproject is built by the root build (languages.toml `subproject_rules`). Built on its own, `app`
+would show a false `dependencies_missing` because `lib` is only on its classpath inside the root build.
+
+### java-maven-wrapper and java-gradle-wrapper
+
+A bare build file plus fake wrapper scripts that only print one line (no Maven or Gradle needed): `mvnw` /
+`mvnw.cmd` print `fixture mvnw (sh) <args>` / `fixture mvnw.cmd <args>`; `gradlew` / `gradlew.bat` print
+`fixture gradlew (sh) <args>` / `fixture gradlew.bat <args>`. The `.sh` scripts are committed **without** the
+executable bit, so on macOS/Linux they run as `sh mvnw`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit |
+|---|---|---|---|---|---|
+| `java-maven-wrapper` | PASS | WARN | PASS | SKIP | 0 |
+| `java-gradle-wrapper` | PASS | WARN | PASS | SKIP | 0 |
+
+Report: the build entry's `command` names the wrapper that ran, not a path: `["mvnw.cmd", "compile"]` /
+`["gradlew.bat", "assemble"]` on Windows, `["mvnw", "compile"]` / `["gradlew", "assemble"]` elsewhere, and its
+output has the matching `fixture ...` line. `environment.runners` has the wrapper as `unknown` and no `mvn` /
+`gradle` entry (the tool on PATH did not run). On Windows only `mvnw.cmd` / `gradlew.bat` (or `gradlew.cmd`)
+are used; without one, the tool on PATH is used.
 
 ### java-maven-detect and java-gradle-detect
 
@@ -598,7 +698,7 @@ Expected lines after the project line:
 
 `java-gradle-detect` (build.gradle declares `checkstyle` and `jacoco`):
 ```
-  build: gradle build  [builtin]
+  build: gradle assemble  [builtin]
   lint: gradle checkstyleMain  [config]
   tests: gradle test  [builtin]
   coverage: gradle jacocoTestReport  [config]
@@ -606,9 +706,12 @@ Expected lines after the project line:
 
 A Maven project never lists `gradle ...` commands and a Gradle project never lists `mvn ...` commands.
 The wrapper (`mvnw` / `gradlew`) is chosen by the runner at run time, so `--dry-run` shows plain `mvn` / `gradle`.
+Gradle's build command is `assemble`, not `build`: `gradle build` also runs `test` and `check`, so a failing test
+or lint would show as a Build failure and the build gate would hide it.
 
-**Not covered by fixtures:** a real `mvn` / `gradle` run (needs the tools and network). Try one by hand on a
-real Maven or Gradle project before marking Java `tested`.
+A plugin counts only when the build file really declares it: text inside comments (`<!-- -->` in `pom.xml`,
+`//` and `/* */` in Gradle scripts) is ignored. A lone `checkstyle.xml` / `pmd.xml` next to `pom.xml` adds
+nothing: Maven ignores it unless the plugin in `pom.xml` points to it.
 
 **Shared Gradle build files.** `build.gradle` / `build.gradle.kts` are claimed by both `java` and `kotlin`. A folder
 with one of them is reported **once**: for the language whose source extensions (`.java` / `.kt`) exist under it
@@ -619,67 +722,156 @@ the first declared language (`java`). So `java-gradle-detect` (no sources) lists
 
 ## kotlin-* (Session 13)
 
-Kotlin builds with Gradle, and a Kotlin compiler or a Gradle download cannot be assumed on every machine, so there are
-**no execution fixtures for Kotlin** (the generic ok / build-fail / test-fail / lint-fail behaviour is already covered
-by the Python, JavaScript and Java fixtures, which share the same runner). Kotlin-specific behaviour is detection,
-checked with `--dry-run`:
+Kotlin builds with Gradle only. The fixtures are checked by `tests/manual_lang_check.py kotlin`; every fixture is
+copied to a temp folder and run with `--path <copy>`; the project is `.`, language `kotlin [untested]`.
+
+### Real Gradle runs
+
+These run real Gradle. Requires `gradle` on PATH, a JDK, and internet access the first time (Gradle downloads the
+Kotlin, detekt and JaCoCo plugins and the libraries into its own cache; this tool installs nothing). If `gradle` is not
+on PATH, `tests/manual_lang_check.py` shows every real-Gradle check as `SKIP` (not run: gradle is not on PATH) and
+ends with `All checks passed: N/N (M Gradle checks not run: gradle is not on PATH)`; a `SKIP` never counts as
+passed.
+
+`kotlin-gradle-ok` is a tiny project: `settings.gradle.kts`, `build.gradle.kts` with the Kotlin JVM plugin
+(`2.0.21`), detekt (`io.gitlab.arturbosch.detekt` `1.23.8`, default rules) and `jacoco` (XML report on), no
+`jvmToolchain` (it would make Gradle download a JDK); `demo.Calc` (an `object` with `add`, `sub`, `mul`) and one
+`kotlin.test` test, `assertEquals(5, Calc.add(2, 3))`. `build/` and `.gradle/` are in its `.gitignore`.
+
+The other `-ok` rows are **variants** that `tests/manual_lang_check.py` makes in a temp copy of `kotlin-gradle-ok`:
+- `build-fail`: in `Calc.kt`, `a + b` becomes `a +`
+- `test-fail`: in `CalcTest.kt`, `assertEquals(5,` becomes `assertEquals(6,`
+- `lint-fail`: a `// FIXME: check overflow` line is added above `fun sub` in `Calc.kt` (detekt's default
+  `ForbiddenComment` rule flags it)
+- `no-tests`: the `src/test` folder is deleted
+- `no-linter`: the detekt plugin line is removed from `build.gradle.kts`
+
+`<percent>` means any coverage percentage: the check only looks for a cell ending in `%`, read from
+`build/reports/jacoco/test/jacocoTestReport.xml` (the report's coverage `source_file`).
+
+| Run | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `kotlin-gradle-ok` | PASS | PASS | PASS | `<percent>` | 0 | build `gradle assemble` (report `command` `["gradle", "assemble"]`); lint `gradle detekt` |
+| `kotlin-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | build `fail`, never `dependencies_missing`; lint/tests reason `build_gate` |
+| `kotlin-gradle-test-fail` | PASS | PASS | FAIL | `<percent>` | 1 | the build stage does not run tests; tests output names `CalcTest` |
+| `kotlin-gradle-lint-fail` | PASS | FAIL | PASS | `<percent>` | 1 | `gradle detekt` output names `Calc.kt`; tests still run |
+| `kotlin-gradle-no-tests` | PASS | PASS | SKIP | WARN | 0 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found`; no coverage data |
+| `kotlin-gradle-no-linter` | PASS | WARN | PASS | `<percent>` | 0 | no detekt / ktlint plugin: lint `no_linter_configured` |
+| `kotlin-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | exactly **one** table row and one report project (see below) |
+
+**Multi-project.** `kotlin-gradle-multi` has `settings.gradle.kts` with `include("app", "lib")`, a root
+`build.gradle.kts` that declares the Kotlin plugin (`apply false`) and applies it to every subproject, and `app`
+depends on `project(":lib")`; `lib` has no tests, `app` has one. It is reported as **one** project `.`: a Gradle
+subproject is built by the root build (languages.toml `subproject_rules`), so it is not built again on its own.
+
+### kotlin-gradle-wrapper
+
+A `build.gradle.kts` (`plugins { kotlin("jvm") }`), `src/main/kotlin/Main.kt`, and fake `gradlew` / `gradlew.bat`
+copied from `java-gradle-wrapper` that only print `fixture gradlew (sh) <args>` / `fixture gradlew.bat <args>`.
+Needs no Gradle.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit |
+|---|---|---|---|---|---|
+| `kotlin-gradle-wrapper` | PASS | WARN | PASS | SKIP | 0 |
+
+Report: the build entry's `command` is `["gradlew.bat", "assemble"]` on Windows, `["gradlew", "assemble"]`
+elsewhere, and its output has the matching `fixture ...` line. `environment.runners` has `gradlew` = `unknown` and
+no `gradle` entry.
 
 ### kotlin-detect
 
 `build.gradle.kts` applies the Kotlin JVM, detekt and jacoco plugins; `src/main/kotlin/Main.kt` makes it a Kotlin
-project (see "Shared Gradle build files" under java-*). Expected lines after the project line (language `kotlin`):
+project (see "Shared Gradle build files" under java-*). Checked with `--dry-run`; nothing is run. Expected lines after
+the project line (language `kotlin`):
 
 ```
-  build: gradle build  [builtin]
+  build: gradle assemble  [builtin]
   lint: gradle detekt  [config]
   tests: gradle test  [builtin]
   coverage: gradle jacocoTestReport  [config]
 ```
 
-A bare Kotlin `build.gradle(.kts)` lists only `build: gradle build` and `tests: gradle test`: lint and coverage run
-only when the build file declares detekt / ktlint / jacoco (or a `detekt.yml` sits next to it). The previous
-built-in `gradle check` (which also runs tests) is gone. A Kotlin project never lists `mvn ...` commands.
-
-**Not covered by fixtures:** a real Gradle run. Try one by hand before marking Kotlin `tested`.
+A bare Kotlin `build.gradle(.kts)` lists only `build: gradle assemble` and `tests: gradle test`. Gradle's build
+command is `assemble`, not `build`: `gradle build` also runs `test` and `check`, so a failing test or lint would show
+as a Build failure and the build gate would hide it. Lint and coverage run only when the build file declares the
+plugin id: `io.gitlab.arturbosch.detekt` or `dev.detekt` (`gradle detekt`), `org.jlleitschuh.gradle.ktlint`
+(`gradle ktlintCheck`), `jacoco` (`gradle jacocoTestReport`). Text in comments does not count. A lone `detekt.yml`
+adds nothing (without the plugin Gradle has no `detekt` task), and Spotless's `ktlint()` step does not add
+`ktlintCheck`. A Kotlin project never lists `mvn ...` commands; `--dry-run` shows plain `gradle` (the runner picks
+`gradlew` at run time).
 
 ---
 
 ## go-* (Session 14)
 
-Tiny Go modules, standard library only (no downloads). Commands are the Go toolchain's own built-ins:
-`go build ./...`, `go vet ./...`, `go test ./...`, `go test -coverprofile=coverage.out ./...`. Requires `go` (1.18+) on
-PATH. `coverage.out` is written into the project folder and ignored by each fixture's `.gitignore`. Run with
-`--path <copy>`; the project is `.`, language `go [untested]`.
+Tiny Go modules, standard library only unless stated. Commands are the Go toolchain's own built-ins:
+`go build -o /dev/null ./...`, `go vet ./...`, `go test ./...`, `go test -coverprofile=coverage.out ./...`. The fixtures
+are checked by `tests/manual_lang_check.py go`; every fixture is copied to a temp folder and run with `--path <copy>`;
+the project is `.`, language `go [untested]`. Requires `go` (1.18+) on PATH; without it every Go run check is shown as
+`SKIP` (not run: go is not on PATH), and a `SKIP` never counts as passed. The `go-golangci-*` runs also need
+`golangci-lint` 2.x on PATH, else they show `SKIP` (not run: golangci-lint is not on PATH). `go-no-tests` needs Go 1.22
+or newer: older Go writes an empty profile for a package without tests, and Coverage shows `WARN`. `coverage.out` is
+written into the project folder and ignored by each fixture's `.gitignore`.
+
+**Build writes no program file.** With exactly one `package main`, plain `go build ./...` saves the compiled program in
+the project folder, and the tool never adds files to user code. `-o /dev/null` builds and writes nothing (also for many
+packages). On Windows Go accepts only `NUL` there, so the runner passes `NUL` (and the report shows it); `--dry-run`
+shows `/dev/null`.
 
 The Coverage cell is the lowest line percentage from `coverage.out`, a **Go cover profile** (statement coverage; it is
-not lcov and has no branch data).
+not lcov and has no branch data). A block listed more than once (e.g. with `-coverpkg`) counts once, as `go tool cover`
+does.
 
-| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+| Run | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
 | `go-ok` | PASS | PASS | PASS | 100.0% | 0 | |
 | `go-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error; build gate skips the rest (`build_gate`) |
 | `go-test-fail` | PASS | PASS | FAIL | FAIL | 1 | asserts `Add(2, 3) == 6`; the coverage command runs the tests again, so it fails too |
 | `go-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 | `go vet` (copylocks) rejects `Show(c Counter)`; `go test` does not run that check, so tests still pass |
+| `go-no-tests` | PASS | PASS | SKIP | 0.0% | 0 | no `_test.go`: `? ... [no test files]`, tests `skipped`, reason `no_tests_found` |
+| `go-main` | PASS | PASS | PASS | 50.0% | 0 | one `package main`; `main` is not run by the test |
+| `go-missing-deps` | WARN | WARN | WARN | WARN | 0 | needs `github.com/google/uuid`; run with `GOPROXY=off`, `GOTOOLCHAIN=local` and an empty `GOMODCACHE` |
+| `go-old-toolchain` | WARN | WARN | WARN | WARN | 0 | temp copy of `go-ok` with `go 1.99` in `go.mod`; run with `GOTOOLCHAIN=local` |
+| `go-golangci-ok` | PASS | PASS | PASS | 100.0% | 0 | `.golangci.yml` is only `version: "2"` |
+| `go-golangci-nofix` | PASS | FAIL | PASS | 100.0% | 1 | badly formatted `calc.go`; the config has `issues: fix: true` |
+
+A module where one package has tests and another has none still shows Tests PASS (the `ok <package>` line counts).
+
+**Report checks:**
+- `go-ok`: build `command` is `["go", "build", "-o", "NUL", "./..."]` on Windows, `["go", "build", "-o", "/dev/null",
+  "./..."]` elsewhere; coverage has exactly one result with `source_file` `coverage.out`, `format` `gocover`,
+  `line_pct` 100.0 (the cover-profile reader, not the percentage in the output); `environment.runners` has a `go` key
+  that is not `unknown`.
+- `go-build-fail`: build `fail` (never `dependencies_missing`); lint, tests and coverage reason `build_gate`.
+- `go-test-fail`: tests `fail`, its output names `want 6`.
+- `go-lint-fail`: lint `fail`, its output names `passes lock by value`.
+- `go-no-tests`: tests `skipped`, reason `no_tests_found`.
+- `go-main`: after the run the copy holds only the fixture's own files plus `coverage.out` and `.pre-llm` (no
+  `go-main` / `go-main.exe`).
+- `go-missing-deps`, `go-old-toolchain`: build `dependencies_missing`, project warnings include
+  `dependencies_missing`, no command is `fail`. Go downloads modules itself; when it cannot (`module lookup disabled by
+  GOPROXY=off`, `...@v1.6.0: Get "https://...": ...`, `dial tcp`) or the installed Go is older than `go.mod` needs
+  (`go: download go1...`, `go.mod requires go >= ...`), that is a setup problem, not a code failure. `no required module
+  provides package` is **not** a dependency phrase: it means `go.mod` lacks a `require` line, a real project error.
+- `go-golangci-ok`: lint `command` is `["golangci-lint", "run", "--fix=false"]`, status `pass`.
+- `go-golangci-nofix`: lint `fail` (`File is not properly formatted (gofmt)`), and `calc.go` in the copy is byte for
+  byte the fixture's `calc.go`: `--fix=false` overrides `issues: fix: true`, so golangci-lint never rewrites code.
 
 **Not applicable for Go:**
 - *no-linter*: `go vet` ships with the toolchain, so every Go module has a linter (a `.golangci.yml` replaces it, see
   go-detect).
-- *no-tests*: `go test ./...` on a module without tests succeeds (`[no test files]`) and what the profile contains
-  depends on the Go version, so the result is decided by the toolchain, not this tool.
 
 ### go-detect
 
-`go.mod` plus `.golangci.yml`. Checked with `--dry-run`. Expected lines after the project line:
+`go.mod`, `main.go` and a `.golangci.yml` that is only `version: "2"` (golangci-lint 2.x rejects a v1 config with
+"unsupported version of the configuration"). Checked with `--dry-run`; nothing is run. Expected lines after the project
+line:
 
 ```
-  build: go build ./...  [builtin]
-  lint: golangci-lint run  [config]
+  build: go build -o /dev/null ./...  [builtin]
+  lint: golangci-lint run --fix=false  [config]
   tests: go test ./...  [builtin]
   coverage: go test -coverprofile=coverage.out ./...  [builtin]
 ```
 
 Without `.golangci.yml` the lint line is `lint: go vet ./...  [builtin]`.
-
-**Not verified by the author:** `go` is not installed on the machine these fixtures were written on; the Go sources and
-the expected cells are derived from the Go toolchain's documented behaviour. If a cell differs on your machine, that is a
-fixture bug to report.

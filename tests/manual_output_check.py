@@ -70,6 +70,40 @@ def _row(stdout: str, first_cell: str) -> list[str]:
     return []
 
 
+def _script_runs_once(tmp: Path) -> tuple[bool, str]:
+    """Run a project whose tests command is a script that logs each call."""
+    work = _sub(tmp, "script-once")
+    (work / "pyproject.toml").write_text('[project]\nname = "s"\n', encoding="utf-8")
+    if sys.platform == "win32":
+        script = work / "check.cmd"
+        script.write_text('@echo ran %* >> "%~dp0ran.txt"\r\n', encoding="utf-8")
+    else:
+        script = work / "check.sh"
+        script.write_text(
+            '#!/bin/sh\necho "ran $*" >> "$(dirname "$0")/ran.txt"\n', encoding="utf-8"
+        )
+        script.chmod(0o755)
+    # Inner double quotes so shlex keeps the path as one word.
+    (work / "pre-llm.toml").write_text(
+        '[[project]]\npath = "."\ntests = "\\"' + script.as_posix() + '\\""\n',
+        encoding="utf-8",
+    )
+    report_path = tmp / "report_script-once.json"
+    argv = ["--path", str(work), "--output", str(report_path)]
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            pre_llm_checks.main(argv)
+    except SystemExit:
+        pass
+
+    ran = work / "ran.txt"
+    if not ran.exists():
+        return False, "script never ran (check is not valid)"
+    lines = [l for l in ran.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+    return len(lines) == 1, f"ran.txt has {len(lines)} lines: {lines}"
+
+
 def run_checks() -> int:
     os.chdir(_REPO_ROOT)  # keep .pre-llm/logs out of the temp folders
     with tempfile.TemporaryDirectory() as td:
@@ -80,7 +114,7 @@ def run_checks() -> int:
         code, out, rep = _run("build-gate", tmp)
         n += 1
         _check(n, "build-gate: exit code 1", ok=code == 1, detail=f"got {code}")
-        row = _row(out, "build-gate")
+        row = _row(out, ".")
         n += 1
         _check(
             n,
@@ -91,8 +125,15 @@ def run_checks() -> int:
         n += 1
         _check(
             n,
-            "build-gate: Details lists 'build-gate / build: FAIL'",
-            ok="  build-gate / build: FAIL  " in out,
+            "build-gate: Details lists '. / build: FAIL'",
+            ok="  . / build: FAIL  " in out,
+            detail=out,
+        )
+        n += 1
+        _check(
+            n,
+            "build-gate: Details log path is relative",
+            ok="(log: .pre-llm/logs/_root_/build-0.log)" in out,
             detail=out,
         )
         n += 1
@@ -113,7 +154,7 @@ def run_checks() -> int:
 
         # --- no-linter: WARN lint, exit 0 ----------------------------------
         code, out, rep = _run("no-linter", tmp)
-        row = _row(out, "no-linter")
+        row = _row(out, ".")
         n += 1
         _check(n, "no-linter: exit code 0 (warnings only)", ok=code == 0, detail=f"got {code}")
         n += 1
@@ -145,13 +186,13 @@ def run_checks() -> int:
 
         # --- coverage-fresh: coverage cell shows the percentage -------------
         code, out, rep = _run("coverage-fresh", tmp)
-        row = _row(out, "coverage-fresh")
+        row = _row(out, ".")
         n += 1
         _check(n, "coverage-fresh: Coverage cell is 72.0%", ok=row[-1:] == ["72.0%"], detail=f"row={row}\n{out}")
 
         # --- stale coverage: not a number -----------------------------------
         code, out, rep = _run("coverage-stale", tmp)
-        row = _row(out, "coverage-stale")
+        row = _row(out, ".")
         n += 1
         _check(
             n,
@@ -169,6 +210,11 @@ def run_checks() -> int:
         code, out, rep = _run("build-gate", _sub(tmp, "d"), ["--dry-run"])
         n += 1
         _check(n, "--dry-run: no results table, exit 0", ok="Summary:" not in out and code == 0, detail=f"exit={code}\n{out}")
+
+        # --- the project's script runs once (no --version probe of it) ------
+        ok, detail = _script_runs_once(tmp)
+        n += 1
+        _check(n, "project script runs only once (no --version probe)", ok=ok, detail=detail)
 
     print()
     passed = sum(1 for _, label, _ in _results if label == _PASS)

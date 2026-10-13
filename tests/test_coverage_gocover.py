@@ -75,6 +75,19 @@ def test_malformed_block_lines_are_skipped_not_fatal(tmp_path):
     assert r is not None and r.line_pct == 100.0
 
 
+def test_duplicate_blocks_count_once_covered_if_any_line_hit(tmp_path):
+    # e.g. -coverpkg=./...: each package's test run lists every block again.
+    p = _profile(
+        tmp_path,
+        "mode: set\n"
+        "a.go:1.1,2.2 1 1\n"
+        "a.go:3.1,4.2 1 0\n"
+        "a.go:1.1,2.2 1 0\n"
+        "a.go:3.1,4.2 1 1\n",
+    )
+    assert read_coverage_file(p).line_pct == 100.0
+
+
 def test_fresh_go_profile_is_used_by_project_reader(tmp_path):
     f = _profile(tmp_path, "mode: set\na.go:1.1,2.2 4 1\na.go:3.1,4.2 1 0\n")
     start = time.time()
@@ -110,7 +123,7 @@ def _go_project(tmp_path: Path, extra: dict[str, str] | None = None) -> Project:
 
 def test_bare_go_module_uses_toolchain_builtins(tmp_path):
     r = detect_commands(_go_project(tmp_path), _GO)
-    assert _argv(r, "build") == [["go", "build", "./..."]]
+    assert _argv(r, "build") == [["go", "build", "-o", "/dev/null", "./..."]]
     assert _argv(r, "lint") == [["go", "vet", "./..."]]
     assert _argv(r, "tests") == [["go", "test", "./..."]]
     assert _argv(r, "coverage") == [["go", "test", "-coverprofile=coverage.out", "./..."]]
@@ -118,6 +131,11 @@ def test_bare_go_module_uses_toolchain_builtins(tmp_path):
 
 def test_golangci_config_replaces_go_vet_as_the_linter(tmp_path):
     r = detect_commands(_go_project(tmp_path, {".golangci.yml": "run: {}"}), _GO)
-    assert _argv(r, "lint") == [["golangci-lint", "run"]]
+    assert _argv(r, "lint") == [["golangci-lint", "run", "--fix=false"]]
     assert r.commands["lint"][0].source == "config"
     assert _argv(r, "tests") == [["go", "test", "./..."]]
+
+
+def test_go_has_no_dead_stage_names_or_config_files_tables():
+    assert "stage_names" not in _GO
+    assert "config_files" not in _GO

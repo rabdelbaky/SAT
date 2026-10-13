@@ -413,8 +413,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
         <file>:<line>.<col>,<line>.<col> <statements> <count>
 
     Line coverage = statements in blocks with count > 0 / all statements.
-    Malformed block lines are skipped.  Returns None when the header is
-    missing or no block line parses (e.g. a package without tests).
+    A block (same ``<file>:<range>``) can appear more than once, e.g. with
+    ``-coverpkg``; like ``go tool cover`` it counts once, covered if any of
+    its lines has count > 0.  Malformed block lines are skipped.  Returns
+    None when the header is missing or no block line parses (e.g. a package
+    without tests).
     """
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -425,8 +428,7 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     if not lines or not lines[0].startswith("mode:"):
         return None
 
-    total = 0
-    covered = 0
+    blocks: dict[str, tuple[int, bool]] = {}  # "<file>:<range>" -> (statements, covered)
     for line in lines[1:]:
         # "<file>:<range> <statements> <count>" — the file name may contain spaces
         parts = line.rsplit(" ", 2)
@@ -437,10 +439,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
             count = int(parts[2])
         except ValueError:
             continue
-        total += statements
-        if count > 0:
-            covered += statements
+        _, seen = blocks.get(parts[0], (statements, False))
+        blocks[parts[0]] = (statements, seen or count > 0)
 
+    total = sum(statements for statements, _ in blocks.values())
+    covered = sum(statements for statements, hit in blocks.values() if hit)
     if total == 0:
         return None
 
