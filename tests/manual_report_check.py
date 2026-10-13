@@ -358,12 +358,11 @@ def check_9_paths_forward_slashes_relative() -> None:
     repo_root = _REPO_ROOT
     project_dir = repo_root / "backend"
     log_file = project_dir / "logs" / "build.log"
-    source_file = project_dir / "pyproject.toml"
 
     cmd = {
         "command": ["python", "-m", "build"],
         "scripts": ["build"],
-        "source": str(source_file),
+        "source": "override",
         "status": "pass",
         "duration_s": 1.2,
         "output_tail": [],
@@ -398,22 +397,20 @@ def check_9_paths_forward_slashes_relative() -> None:
         _fail(name, f"project path {proj_path!r} is absolute, expected relative")
         return
 
-    # log_path must be relative
+    # log_path must be relative, forward-slash, and inside the repo.
+    # (source is a label like "override", not a path, so it is not checked.)
     log_path = cmd_entry.get("log_path")
     if log_path is None:
         _fail(name, "log_path is null, expected a relative forward-slash path")
         return
+    if log_path == "<external>":
+        _fail(name, "log_path is '<external>' for a log inside the repo")
+        return
     if Path(log_path).is_absolute():
         _fail(name, f"log_path {log_path!r} is absolute, expected relative")
         return
-
-    # source must be relative
-    source = cmd_entry.get("source")
-    if source is None:
-        _fail(name, "source is null, expected a relative forward-slash path")
-        return
-    if Path(source).is_absolute():
-        _fail(name, f"source {source!r} is absolute, expected relative")
+    if log_path != "backend/logs/build.log":
+        _fail(name, f"log_path={log_path!r}, expected 'backend/logs/build.log'")
         return
 
     _pass(name)

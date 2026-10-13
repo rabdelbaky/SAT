@@ -2,7 +2,10 @@
 
 cargo build / clippy / test are toolchain built-ins.  Coverage is NOT built-in:
 `cargo tarpaulin` is a separate install, so running it on every project failed
-projects that never declared it.  It runs only when the project declares it.
+projects that never declared it.  It runs only when the crate has a tarpaulin
+config file (`tarpaulin.toml` / `.tarpaulin.toml`; tarpaulin never reads
+`[package.metadata.tarpaulin]`).  Every command passes --workspace so a workspace
+root that is also a package builds and tests its members too.
 """
 
 from __future__ import annotations
@@ -28,15 +31,18 @@ def _proj(tmp_path: Path, cargo: str = _CARGO, extra: dict[str, str] | None = No
     return Project(path=tmp_path, language="rust", primary_build_file="Cargo.toml")
 
 
+_TARPAULIN = ["cargo", "tarpaulin", "--workspace", "--out", "Xml", "--output-dir", "."]
+
+
 def _argv(result, stage):
     return [c.command for c in result.commands[stage]]
 
 
 def test_bare_crate_gets_build_clippy_test_and_no_coverage(tmp_path):
     r = detect_commands(_proj(tmp_path), _RUST)
-    assert _argv(r, "build") == [["cargo", "build"]]
-    assert _argv(r, "lint") == [["cargo", "clippy"]]
-    assert _argv(r, "tests") == [["cargo", "test"]]
+    assert _argv(r, "build") == [["cargo", "build", "--workspace"]]
+    assert _argv(r, "lint") == [["cargo", "clippy", "--workspace"]]
+    assert _argv(r, "tests") == [["cargo", "test", "--workspace"]]
     assert _argv(r, "coverage") == []
 
 
@@ -44,15 +50,16 @@ def test_tarpaulin_config_file_adds_coverage(tmp_path):
     for i, name in enumerate(["tarpaulin.toml", ".tarpaulin.toml"]):
         d = tmp_path / str(i)
         d.mkdir()
-        r = detect_commands(_proj(d, extra={name: "[default]\n"}), _RUST)
-        assert _argv(r, "coverage") == [["cargo", "tarpaulin", "--out", "Xml"]], name
+        r = detect_commands(_proj(d, extra={name: "# defaults\n"}), _RUST)
+        assert _argv(r, "coverage") == [_TARPAULIN], name
         assert r.commands["coverage"][0].source == "config"
 
 
-def test_tarpaulin_metadata_in_cargo_toml_adds_coverage(tmp_path):
+def test_tarpaulin_metadata_in_cargo_toml_alone_gives_no_coverage(tmp_path):
+    # tarpaulin only reads tarpaulin.toml / .tarpaulin.toml, never package metadata.
     cargo = _CARGO + "\n[package.metadata.tarpaulin]\nout = [\"Xml\"]\n"
     r = detect_commands(_proj(tmp_path, cargo), _RUST)
-    assert _argv(r, "coverage") == [["cargo", "tarpaulin", "--out", "Xml"]]
+    assert _argv(r, "coverage") == []
 
 
 def test_tarpaulin_only_as_a_word_in_cargo_toml_does_not_count(tmp_path):
@@ -64,3 +71,12 @@ def test_tarpaulin_only_as_a_word_in_cargo_toml_does_not_count(tmp_path):
 def test_cobertura_output_is_read_from_cobertura_xml():
     # tarpaulin --out Xml writes cobertura.xml
     assert "cobertura.xml" in _RUST["coverage_files"]
+
+
+def test_no_dead_rust_tables():
+    # Rust has no script section (stage_names), nothing reads config_files, and
+    # only the first builtin_phases entry of a stage is ever used.
+    assert "stage_names" not in _RUST
+    assert "config_files" not in _RUST
+    for stage, commands in _RUST["builtin_phases"].items():
+        assert len(commands) <= 1, stage

@@ -1,0 +1,6 @@
+# Only one cop, so the result does not depend on the RuboCop version.
+AllCops:
+  DisabledByDefault: true
+  SuggestExtensions: false
+Lint/UselessAssignment:
+  Enabled: true
