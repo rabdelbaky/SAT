@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from detection import DetectionResult, StageCommand, detect_commands
 from discovery import Project, discover_projects
-from orchestrator import OrchestratorOptions, run_project
+from orchestrator import OrchestratorOptions, _matches_dep_error, run_project
 from pre_llm_checks import load_languages
 
 _LANGS = load_languages()
@@ -151,6 +151,14 @@ def test_no_tests_fail_patterns():
         "\t Executed 1 test, with 1 failure (0 unexpected) in 0.002 (0.002) seconds",
         "no_tests_fail_patterns",
     )
+
+
+def test_xctest_not_available_is_a_dependency_error():
+    def matches(text: str) -> bool:
+        return _matches_dep_error(text, _SWIFT["dep_error_phrases"], _SWIFT.get("dep_error_patterns", []))
+
+    assert matches("error: XCTest not available")
+    assert not matches("error: no tests found; create a target in the 'Tests' directory")
 
 
 _NO_TEST_TARGET = (

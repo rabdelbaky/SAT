@@ -625,9 +625,12 @@ dep_folders       = []
 # A Package.swift that needs a newer Swift than the one installed, a toolchain
 # without XCTest/Testing, or one without `swift format`, is a setup problem.
 # NOT "no such module" alone: a misspelt import prints it too (a real code error).
+# "XCTest not available": `swift test` on macOS without Xcode (Command Line Tools only).
+# "Loading sourcekitdInProc": SwiftLint crashes without Xcode's SourceKit.
 dep_error_phrases  = ["error: Failed to clone repository ",
                       "Couldn't fetch updates from remote repositories",
-                      "no such module 'XCTest'", "no such module 'Testing'"]
+                      "no such module 'XCTest'", "no such module 'Testing'",
+                      "error: XCTest not available", "Loading sourcekitdInProc"]
 dep_error_patterns = ['''is using Swift tools version \S+ but the installed version is ''',
                       '''unknown or missing subcommand 'swift-format'''']
 stages            = ["build", "lint", "tests", "coverage"]

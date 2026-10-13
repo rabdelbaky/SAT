@@ -74,7 +74,12 @@ _MISSING_DEPENDENCIES = {
               "error: Couldn't fetch updates from remote repositories:",
               "error: 'swift-ok': package 'swift-ok' is using Swift tools version 99.0.0 but the installed version is 6.2.4",
               "Tests/CalcTests/CalcTests.swift:1:8: error: no such module 'XCTest'",
-              "error: unknown or missing subcommand 'swift-format'"],
+              "error: unknown or missing subcommand 'swift-format'",
+              "warning: could not determine XCTest paths: terminated(1): /usr/bin/xcrun --sdk macosx "
+              "--show-sdk-platform-path output:\n    xcrun: error: unable to lookup item 'PlatformPath' "
+              "from command line tools installation\n\nerror: XCTest not available",
+              "SourceKittenFramework/library_wrapper.swift:63: Fatal error: Loading "
+              "sourcekitdInProc.framework/Versions/A/sourcekitdInProc failed. Tried:"],
     "ruby": ["Could not find gem 'rspec' in locally installed gems.",
              "cannot load such file -- minitest/autorun (LoadError)",
              "bundler: command not found: rspec\nInstall missing gem executables with `bundle install`",

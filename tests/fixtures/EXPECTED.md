@@ -1330,6 +1330,12 @@ newer for `swift format`), the Swift toolchain on Windows and Linux. The SwiftLi
 `swiftlint` and `swiftformat` on PATH, and the swift-format runs need `swift format`; without them those runs show
 `SKIP` (never counted as passed). No fixture has dependencies that download, and swift-missing-deps needs no internet.
 
+On macOS the Swift runs need **full Xcode**: the Command Line Tools have no XCTest (`swift test` prints
+`error: XCTest not available`), and SwiftLint needs Xcode's SourceKit (without it SwiftLint crashes with
+`Loading sourcekitdInProc ... failed`). Without Xcode the tool shows WARN (`dependencies_missing`) for Tests, Coverage
+and SwiftLint, and the manual check shows every Swift run as SKIP (not run: XCTest not available: install full Xcode and
+run `sudo xcode-select -s /Applications/Xcode.app`); swift-detect still runs.
+
 ### Rules
 
 - **Swift Package Manager only.** The build file is `Package.swift`; build, tests and coverage are the SwiftPM

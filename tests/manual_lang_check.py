@@ -1081,8 +1081,30 @@ def _swift_format_available() -> bool:
     return proc.returncode == 0
 
 
+_NO_XCTEST = "XCTest not available: install full Xcode and run sudo xcode-select -s /Applications/Xcode.app"
+
+
+def _xctest_available() -> bool:
+    """macOS: True if `xcrun --sdk macosx --show-sdk-platform-path` exits 0 (full Xcode, not
+    only the Command Line Tools, which have no XCTest).  Other platforms: always True."""
+    if sys.platform != "darwin":
+        return True
+    xcrun = shutil.which("xcrun")
+    if xcrun is None:
+        return False
+    try:
+        proc = subprocess.run([xcrun, "--sdk", "macosx", "--show-sdk-platform-path"], shell=False,
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
 def _swift_checks(tmp: Path) -> None:
     no_swift = "" if shutil.which("swift") else "swift is not on PATH"
+    if not no_swift and not _xctest_available():
+        no_swift = _NO_XCTEST
+        print(f"      {_NO_XCTEST}", flush=True)
     extra = {
         "": "",
         "swiftlint": "" if shutil.which("swiftlint") else "swiftlint is not on PATH",
