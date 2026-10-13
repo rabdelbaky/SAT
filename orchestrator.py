@@ -26,6 +26,10 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
   project are skipped (status="skipped", reason="build_gate") UNLESS
   --lint-anyway is set (lint still runs) OR --steps excludes build (gate off).
 - --steps: only run the listed stages; if build is excluded, gate is off.
+- Lint gate: if lint fails or times out, the tests and coverage stages do not
+  run (status="skipped", reason="lint_failed").  Lint no_linter_configured,
+  tool_not_installed, dependencies_missing, skipped or pass change nothing.
+  --steps without lint turns the gate off.
 - A project whose lint stage has no commands gets status no_linter_configured.
 - A project with no commands at all for any stage gets nothing_to_run warning.
 - Dependency check (data-driven from languages.toml):
@@ -457,6 +461,18 @@ def run_project(
         if build_failed and stage == "lint" and not opts.lint_anyway:
             result.stages.append(
                 StageResult(stage=stage, status="skipped", reason="build_gate")
+            )
+            continue
+
+        # --- Lint gate: lint failed -> tests and coverage skipped ----
+        lint_st = next((s for s in result.stages if s.stage == "lint"), None)
+        if (
+            stage in ("tests", "coverage")
+            and lint_st is not None
+            and lint_st.status in ("fail", "timeout")
+        ):
+            result.stages.append(
+                StageResult(stage=stage, status="skipped", reason="lint_failed")
             )
             continue
 

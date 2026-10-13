@@ -43,7 +43,7 @@ _results: list[tuple[int, str, str]] = []
 _EXPECTED = {
     "python-ok": ("SKIP", "PASS", "PASS", "SKIP", 0),
     "python-test-fail": ("SKIP", "PASS", "FAIL", "SKIP", 1),
-    "python-lint-fail": ("SKIP", "FAIL", "PASS", "SKIP", 1),
+    "python-lint-fail": ("SKIP", "FAIL", "SKIP", "SKIP", 1),
     "python-no-tests": ("SKIP", "PASS", "SKIP", "SKIP", 0),
     "python-no-linter": ("SKIP", "WARN", "PASS", "SKIP", 0),
     "python-cov-addopts": ("SKIP", "WARN", "PASS", "83.3%", 0),

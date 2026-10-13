@@ -40,7 +40,7 @@ _EXPECTED = {
     "js-ok": ("PASS", "PASS", "PASS", "SKIP", 0),
     "js-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
     "js-test-fail": ("PASS", "PASS", "FAIL", "SKIP", 1),
-    "js-lint-fail": ("PASS", "FAIL", "PASS", "SKIP", 1),
+    "js-lint-fail": ("PASS", "FAIL", "SKIP", "SKIP", 1),
     "js-no-tests": ("PASS", "PASS", "SKIP", "SKIP", 0),
     "js-no-linter": ("PASS", "WARN", "PASS", "SKIP", 0),
     "js-bad-require": ("PASS", "PASS", "FAIL", "SKIP", 1),

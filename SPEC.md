@@ -24,6 +24,7 @@ Cross-platform Python script (Windows/macOS/Linux, Python 3.11+, no third-party 
 6. **Run safely**: prefer wrappers (mvnw/gradlew; `.cmd` on Windows). Tool missing -> `tool_not_installed` warning, stage skipped.
 7. **Build gate**: Build fails or times out -> other stages for that project skipped. `--lint-anyway` still runs lint. `--steps` excluding build disables the gate. Projects are independent.
 7a. **[NEW S22] Tests gate for coverage**: Tests fail or time out -> Coverage is skipped (SKIP, report reason tests_failed, no Details line). Tests ran but found no tests (no_tests_found) -> Tests SKIP and Coverage FAIL (report reason no_tests_found, Details "no tests found"); coverage is not run. A project with no tests command at all is not "no tests found". --steps without tests turns this gate off.
+7b. **[NEW S23] Lint gate**: Lint fails or times out -> Tests and Coverage skipped (SKIP, report reason lint_failed, no Details line). Lint WARN or SKIP does not gate. --steps without lint turns this gate off.
 8. **Timeouts**: Build 10m, Lint 5m, Tests 15m, Coverage 15m. Override `--timeout-build` etc. (90s, 30m, 1h, 1h30m, seconds). On timeout kill the whole process tree. `timeout` counts as failure for exit code.
 9. **Coverage**: read JaCoCo XML, Cobertura XML, Istanbul json-summary, lcov. Only files written during this run (freshness check). Fallback: parse percentage from output. Line coverage is main; branch if available. Per-tool results never averaged; table shows lowest. No threshold in v1. No data -> warning.
 

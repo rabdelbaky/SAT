@@ -49,7 +49,7 @@ _EXPECTED_JAVAC = {
     "java-ok": ("PASS", "PASS", "PASS", "SKIP", 0),
     "java-build-fail": ("FAIL", "SKIP", "SKIP", "SKIP", 1),
     "java-test-fail": ("PASS", "PASS", "FAIL", "SKIP", 1),
-    "java-lint-fail": ("PASS", "FAIL", "PASS", "SKIP", 1),
+    "java-lint-fail": ("PASS", "FAIL", "SKIP", "SKIP", 1),
     "java-no-linter": ("PASS", "WARN", "PASS", "SKIP", 0),
 }
 
@@ -74,7 +74,7 @@ for _tool in ("maven", "gradle"):
     _EXPECTED_REAL[f"java-{_tool}-ok"] = (_base, "ok", "PASS", "PASS", "PASS", "33.3%", 0)
     _EXPECTED_REAL[f"java-{_tool}-build-fail"] = (_base, "build-fail", "FAIL", "SKIP", "SKIP", "SKIP", 1)
     _EXPECTED_REAL[f"java-{_tool}-test-fail"] = (_base, "test-fail", "PASS", "PASS", "FAIL", "SKIP", 1)
-    _EXPECTED_REAL[f"java-{_tool}-lint-fail"] = (_base, "lint-fail", "PASS", "FAIL", "PASS", "33.3%", 1)
+    _EXPECTED_REAL[f"java-{_tool}-lint-fail"] = (_base, "lint-fail", "PASS", "FAIL", "SKIP", "SKIP", 1)
     _EXPECTED_REAL[f"java-{_tool}-no-tests"] = (_base, "no-tests", "PASS", "PASS", "SKIP", "FAIL", 1)
     _EXPECTED_REAL[f"java-{_tool}-multi"] = (f"java-{_tool}-multi", "ok", "PASS", "WARN", "PASS", "SKIP", 0)
 

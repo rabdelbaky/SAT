@@ -3,6 +3,13 @@
 Discovery expectations for the `monorepo` fixture.
 Each entry is what `discover_projects` must return for that fixture folder.
 
+## Lint gate (Session 23)
+
+If the lint stage of a project ends `fail` or `timeout`, the tests and coverage stages do not run. Each gets
+`status="skipped"`, `reason="lint_failed"`, no commands. The table shows `SKIP` for both, with no Details lines for
+them. Lint `no_linter_configured`, `tool_not_installed`, `dependencies_missing`, `skipped` or `pass` change nothing.
+With `--steps` that leaves out `lint`, there is no gate.
+
 ## Coverage after the tests stage (Session 22)
 
 These two rules apply to every language below.
@@ -514,7 +521,7 @@ Run each with `--path tests/fixtures/<name>`; the project is `.`, language `pyth
 |---|---|---|---|---|---|---|
 | `python-ok` | SKIP | PASS | PASS | SKIP | 0 | |
 | `python-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | `add(2, 3) == 6` is asserted; Details lists `. / tests: FAIL` |
-| `python-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `bad_syntax.py` does not parse; tests still run (lint failure does not gate tests) |
+| `python-lint-fail` | SKIP | FAIL | SKIP | SKIP | 1 | `bad_syntax.py` does not parse; tests and coverage skipped (`lint_failed`) |
 | `python-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no test config: the tests stage is skipped (`nothing_to_run`), no project warning |
 | `python-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no lint config: `no_linter_configured`; Details says `no linter configured` |
 
@@ -607,7 +614,7 @@ project is `.`, language `javascript` (tested since Session 11, so no `[untested
 | `js-ok` | PASS | PASS | PASS | SKIP | 0 | |
 | `js-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `calc.js` has a syntax error; build gate skips the rest (`build_gate`) |
 | `js-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) === 6` |
-| `js-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `debugger;` in `calc.js`; lint output names `calc.js:2: no-debugger`; tests still run |
+| `js-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `debugger;` in `calc.js`; lint output names `calc.js:2: no-debugger`; tests and coverage skipped (`lint_failed`) |
 | `js-no-tests` | PASS | PASS | SKIP | SKIP | 0 | no `test` script, no test config: tests stage skipped (`nothing_to_run`) |
 | `js-no-linter` | PASS | WARN | PASS | SKIP | 0 | no `lint` script, no lint config: `no_linter_configured` |
 | `js-bad-require` | PASS | PASS | FAIL | SKIP | 1 | test requires `./calcx.js`, which does not exist: a code bug, so FAIL, not a warning |
@@ -675,7 +682,7 @@ language `java` (tested since Session 12, so no `[untested]` label). No fixture 
 | `java-ok` | PASS | PASS | PASS | SKIP | 0 | |
 | `java-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | `Calc.java` does not compile; build gate skips the rest (`build_gate`) |
 | `java-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) == 6` |
-| `java-lint-fail` | PASS | FAIL | PASS | SKIP | 1 | `// FIXME` in `Calc.java`; lint output names `Calc.java:3: no-fixme`; tests still run |
+| `java-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `// FIXME` in `Calc.java`; lint output names `Calc.java:3: no-fixme`; tests and coverage skipped (`lint_failed`) |
 | `java-no-linter` | PASS | WARN | PASS | SKIP | 0 | bare `pom.xml`, no checkstyle/pmd/spotbugs plugin, no lint config: `no_linter_configured` |
 
 ### Real Maven and Gradle runs
@@ -699,13 +706,13 @@ The other rows are **variants** that `tests/manual_java_check.py` makes in a tem
 | `java-maven-ok` | PASS | PASS | PASS | 33.3% | 0 | build `mvn compile`; coverage from `target/site/jacoco/jacoco.xml` |
 | `java-maven-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | a compile error is `fail`, never `dependencies_missing` |
 | `java-maven-test-fail` | PASS | PASS | FAIL | SKIP | 1 | tests output names `CalcTest` |
-| `java-maven-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `mvn checkstyle:check` output names `Calc.java` |
+| `java-maven-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `mvn checkstyle:check` output names `Calc.java`; tests and coverage skipped (`lint_failed`) |
 | `java-maven-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `No tests to run.`: tests `skipped` (`no_tests_found`), coverage `fail` (`no_tests_found`), not run |
 | `java-maven-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below); `lib` has no tests, `app` has one |
 | `java-gradle-ok` | PASS | PASS | PASS | 33.3% | 0 | build `gradle assemble`; coverage from `build/reports/jacoco/test/jacocoTestReport.xml` |
 | `java-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | |
 | `java-gradle-test-fail` | PASS | PASS | FAIL | SKIP | 1 | the build stage does not run tests, so a test failure shows under Tests |
-| `java-gradle-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `gradle checkstyleMain` output names `Calc.java` |
+| `java-gradle-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `gradle checkstyleMain` output names `Calc.java`; tests and coverage skipped (`lint_failed`) |
 | `java-gradle-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `> Task :test NO-SOURCE`: tests `skipped` (`no_tests_found`), coverage `fail` (`no_tests_found`), not run |
 | `java-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below) |
 
@@ -811,7 +818,7 @@ The other `-ok` rows are **variants** that `tests/manual_lang_check.py` makes in
 | `kotlin-gradle-ok` | PASS | PASS | PASS | `<percent>` | 0 | build `gradle assemble` (report `command` `["gradle", "assemble"]`); lint `gradle detekt` |
 | `kotlin-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | build `fail`, never `dependencies_missing`; lint/tests reason `build_gate` |
 | `kotlin-gradle-test-fail` | PASS | PASS | FAIL | SKIP | 1 | the build stage does not run tests; tests output names `CalcTest` |
-| `kotlin-gradle-lint-fail` | PASS | FAIL | PASS | `<percent>` | 1 | `gradle detekt` output names `Calc.kt`; tests still run |
+| `kotlin-gradle-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `gradle detekt` output names `Calc.kt`; tests and coverage skipped (`lint_failed`) |
 | `kotlin-gradle-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found`; coverage `fail` (`no_tests_found`), not run |
 | `kotlin-gradle-no-linter` | PASS | WARN | PASS | `<percent>` | 0 | no detekt / ktlint plugin: lint `no_linter_configured` |
 | `kotlin-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | exactly **one** table row and one report project (see below) |
@@ -884,13 +891,13 @@ does.
 | `go-ok` | PASS | PASS | PASS | 100.0% | 0 | |
 | `go-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error; build gate skips the rest (`build_gate`) |
 | `go-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `Add(2, 3) == 6`; coverage reason `tests_failed`: the coverage command no longer runs the tests again |
-| `go-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 | `go vet` (copylocks) rejects `Show(c Counter)`; `go test` does not run that check, so tests still pass |
+| `go-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 | `go vet` (copylocks) rejects `Show(c Counter)`; tests and coverage skipped (`lint_failed`) |
 | `go-no-tests` | PASS | PASS | SKIP | FAIL | 1 | no `_test.go`: `? ... [no test files]`, tests `skipped`, reason `no_tests_found`; coverage `fail`, not run |
 | `go-main` | PASS | PASS | PASS | 50.0% | 0 | one `package main`; `main` is not run by the test |
 | `go-missing-deps` | WARN | WARN | WARN | WARN | 0 | needs `github.com/google/uuid`; run with `GOPROXY=off`, `GOTOOLCHAIN=local` and an empty `GOMODCACHE` |
 | `go-old-toolchain` | WARN | WARN | WARN | WARN | 0 | temp copy of `go-ok` with `go 1.99` in `go.mod`; run with `GOTOOLCHAIN=local` |
 | `go-golangci-ok` | PASS | PASS | PASS | 100.0% | 0 | `.golangci.yml` is only `version: "2"` |
-| `go-golangci-nofix` | PASS | FAIL | PASS | 100.0% | 1 | badly formatted `calc.go`; the config has `issues: fix: true` |
+| `go-golangci-nofix` | PASS | FAIL | SKIP | SKIP | 1 | badly formatted `calc.go`; the config has `issues: fix: true`; tests and coverage skipped (`lint_failed`) |
 
 A module where one package has tests and another has none still shows Tests PASS (the `ok <package>` line counts).
 
@@ -961,7 +968,7 @@ Fixtures:
 | `csharp-ok` | PASS | PASS | PASS | 100.0% | 0 |
 | `csharp-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 |
 | `csharp-test-fail` | PASS | PASS | FAIL | SKIP | 1 |
-| `csharp-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 |
+| `csharp-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 |
 | `csharp-no-tests` | PASS | PASS | SKIP | FAIL | 1 |
 | `csharp-missing-deps` | WARN | WARN | WARN | WARN | 0 |
 | `csharp-old-sdk` | WARN | WARN | WARN | SKIP | 0 |
@@ -1064,7 +1071,7 @@ Fixtures:
 | `rust-ok` | PASS | PASS | PASS | SKIP | 0 |
 | `rust-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 |
 | `rust-test-fail` | PASS | PASS | FAIL | SKIP | 1 |
-| `rust-lint-fail` | PASS | FAIL | PASS | SKIP | 1 |
+| `rust-lint-fail` | PASS | FAIL | SKIP | SKIP | 1 |
 | `rust-no-tests` | PASS | PASS | SKIP | FAIL | 1 |
 | `rust-workspace` | PASS | PASS | PASS | SKIP | 0 |
 | `rust-missing-deps` | WARN | WARN | WARN | SKIP | 0 |
@@ -1174,7 +1181,7 @@ Fixtures:
 |---|---|---|---|---|---|---|---|---|
 | `php-unit-ok` | `php-unit-ok` | php, composer | SKIP | PASS | PASS | 100.0% | WARN | 0 |
 | `php-unit-test-fail` | `php-unit-test-fail` | php, composer | SKIP | PASS | FAIL | SKIP | SKIP | 1 |
-| `php-unit-lint-fail` | `php-unit-lint-fail` | php, composer | SKIP | FAIL | PASS | 100.0% | WARN | 1 |
+| `php-unit-lint-fail` | `php-unit-lint-fail` | php, composer | SKIP | FAIL | SKIP | SKIP | SKIP | 1 |
 | `php-unit-no-tests` | `php-unit-no-tests` | php, composer | SKIP | PASS | SKIP | FAIL | FAIL | 1 |
 | `php-unit-missing-deps` | copy of `php-unit-ok`, no `vendor/` | nothing | SKIP | SKIP | SKIP | SKIP | SKIP | 0 |
 | `php-scripts` | `php-scripts` | php, composer | SKIP | PASS | PASS | SKIP | SKIP | 0 |
@@ -1211,7 +1218,7 @@ detection**; the php-unit runs above prove detection.
 |---|---|---|---|---|---|---|
 | `php-ok` | SKIP | PASS | PASS | SKIP | 0 | |
 | `php-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) === 6` |
-| `php-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `php -l bad.php` reports a parse error; `bad.php` is not loaded by the tests |
+| `php-lint-fail` | SKIP | FAIL | SKIP | SKIP | 1 | `php -l bad.php` reports a parse error; tests and coverage skipped (`lint_failed`) |
 | `php-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no `phpunit.xml`, no composer script: tests stage skipped (`nothing_to_run`) |
 | `php-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no phpcs/phpstan/psalm config: `no_linter_configured` |
 
@@ -1282,7 +1289,7 @@ a Ruby project, **not** Ruby detection.
 |---|---|---|---|---|---|---|
 | `ruby-ok` | SKIP | PASS | PASS | SKIP | 0 | |
 | `ruby-test-fail` | SKIP | PASS | FAIL | SKIP | 1 | asserts `add(2, 3) == 6` |
-| `ruby-lint-fail` | SKIP | FAIL | PASS | SKIP | 1 | `ruby -c bad.rb` reports a syntax error; `bad.rb` is not loaded by the tests |
+| `ruby-lint-fail` | SKIP | FAIL | SKIP | SKIP | 1 | `ruby -c bad.rb` reports a syntax error; tests and coverage skipped (`lint_failed`) |
 | `ruby-no-tests` | SKIP | PASS | SKIP | SKIP | 0 | no tests command, no `.rspec`: tests stage skipped (`nothing_to_run`) |
 | `ruby-no-linter` | SKIP | WARN | PASS | SKIP | 0 | no lint command, no `.rubocop.yml` / `.standard.yml`: `no_linter_configured` |
 
@@ -1298,7 +1305,7 @@ load, every other gem (minitest, rspec, ...) is hidden.
 |---|---|---|---|---|---|---|---|
 | `ruby-rspec-ok` | `ruby-rspec-ok` | ruby, bundle, gems | SKIP | PASS | PASS | 80.0% | 0 |
 | `ruby-rspec-test-fail` | copy of `ruby-rspec-ok`, `spec/calc_spec.rb`: `eq(5)` → `eq(6)` | ruby, bundle, gems | SKIP | PASS | FAIL | SKIP | 1 |
-| `ruby-rspec-lint-fail` | copy of `ruby-rspec-ok`, `lib/calc.rb`: `unused = 1` added before `first + second` | ruby, bundle, gems | SKIP | FAIL | PASS | a percentage | 1 |
+| `ruby-rspec-lint-fail` | copy of `ruby-rspec-ok`, `lib/calc.rb`: `unused = 1` added before `first + second` | ruby, bundle, gems | SKIP | FAIL | SKIP | SKIP | 1 |
 | `ruby-rspec-no-specs` | copy of `ruby-rspec-ok` without `spec/calc_spec.rb` | ruby, bundle, gems | SKIP | PASS | SKIP | FAIL | 1 |
 | `ruby-rspec-missing-gems` | copy of `ruby-rspec-ok`, empty gems folder | ruby, bundle | SKIP | WARN | WARN | WARN | 0 |
 | `ruby-standard` | `ruby-standard` | ruby, bundle, gem standard | SKIP | FAIL | SKIP | SKIP | 1 |
@@ -1442,7 +1449,7 @@ test class fails to compile.)
 | `swift-ok` | `swift-ok` | | PASS | PASS | PASS | 100.0% | 0 |
 | `swift-build-fail` | `swift-build-fail` | | FAIL | SKIP | SKIP | SKIP | 1 |
 | `swift-test-fail` | `swift-test-fail` | | PASS | PASS | FAIL | SKIP | 1 |
-| `swift-lint-fail` | `swift-lint-fail` | | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-lint-fail` | `swift-lint-fail` | | PASS | FAIL | SKIP | SKIP | 1 |
 | `swift-no-linter` | `swift-no-linter` | | PASS | WARN | PASS | 100.0% | 0 |
 | `swift-no-tests` | `swift-no-tests` (no test target) | | PASS | WARN | SKIP | FAIL | 1 |
 | `swift-zero-tests` | copy of `swift-no-linter`, `Tests/CalcTests/CalcTests.swift`: `testSum` removed (a test class with no tests) | | PASS | WARN | SKIP | FAIL | 1 |
@@ -1450,11 +1457,11 @@ test class fails to compile.)
 | `swift-old-toolchain` | copy of `swift-no-linter`, `Package.swift`: `swift-tools-version:5.5` → `swift-tools-version:99.0` | | WARN | WARN | WARN | WARN | 0 |
 | `swift-missing-deps` | `swift-missing-deps` (depends on a package at `https://invalid.invalid/...`) | | WARN | WARN | WARN | WARN | 0 |
 | `swift-swiftlint` | `swift-swiftlint` | swiftlint | PASS | PASS | PASS | 100.0% | 0 |
-| `swift-swiftlint-fail` | copy of `swift-swiftlint`, `Sources/Calc/Calc.swift`: `    a + b` → `    return a + b;` | swiftlint | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-swiftlint-fail` | copy of `swift-swiftlint`, `Sources/Calc/Calc.swift`: `    a + b` → `    return a + b;` | swiftlint | PASS | FAIL | SKIP | SKIP | 1 |
 | `swift-swiftformat` | `swift-swiftformat` | swiftformat | PASS | PASS | PASS | 100.0% | 0 |
-| `swift-swiftformat-fail` | copy of `swift-swiftformat`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swiftformat | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-swiftformat-fail` | copy of `swift-swiftformat`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swiftformat | PASS | FAIL | SKIP | SKIP | 1 |
 | `swift-swift-format` | `swift-swift-format` | swift format | PASS | PASS | PASS | 100.0% | 0 |
-| `swift-swift-format-fail` | copy of `swift-swift-format`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swift format | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-swift-format-fail` | copy of `swift-swift-format`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swift format | PASS | FAIL | SKIP | SKIP | 1 |
 
 swift-missing-deps runs with `GIT_TERMINAL_PROMPT=0`, so git never waits for input. The `.invalid` host never
 resolves, so this is what any offline or blocked download looks like, and no cache on the PC can make it pass.
