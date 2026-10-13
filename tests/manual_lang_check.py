@@ -223,9 +223,9 @@ _KOTLIN_REAL = {
     for v, cells in (
         ("ok", ("PASS", "PASS", "PASS", _PCT, 0)),
         ("build-fail", ("FAIL", "SKIP", "SKIP", "SKIP", 1)),
-        ("test-fail", ("PASS", "PASS", "FAIL", _PCT, 1)),
+        ("test-fail", ("PASS", "PASS", "FAIL", "SKIP", 1)),
         ("lint-fail", ("PASS", "FAIL", "PASS", _PCT, 1)),
-        ("no-tests", ("PASS", "PASS", "SKIP", "WARN", 0)),
+        ("no-tests", ("PASS", "PASS", "SKIP", "FAIL", 1)),
         ("no-linter", ("PASS", "WARN", "PASS", _PCT, 0)),
     )
 }
@@ -337,9 +337,9 @@ def _env(**values: str):
 _GO_RUNS = {
     "go-ok": ("go-ok", None, False, "PASS", "PASS", "PASS", "100.0%", 0),
     "go-build-fail": ("go-build-fail", None, False, "FAIL", "SKIP", "SKIP", "SKIP", 1),
-    "go-test-fail": ("go-test-fail", None, False, "PASS", "PASS", "FAIL", "FAIL", 1),
+    "go-test-fail": ("go-test-fail", None, False, "PASS", "PASS", "FAIL", "SKIP", 1),
     "go-lint-fail": ("go-lint-fail", None, False, "PASS", "FAIL", "PASS", "100.0%", 1),
-    "go-no-tests": ("go-no-tests", None, False, "PASS", "PASS", "SKIP", "0.0%", 0),
+    "go-no-tests": ("go-no-tests", None, False, "PASS", "PASS", "SKIP", "FAIL", 1),
     "go-main": ("go-main", None, False, "PASS", "PASS", "PASS", "50.0%", 0),
     "go-missing-deps": ("go-missing-deps", None, False, "WARN", "WARN", "WARN", "WARN", 0),
     "go-old-toolchain": ("go-ok", [("go.mod", "go 1.18", "go 1.99")], False,
@@ -450,9 +450,9 @@ def _go_checks(tmp: Path) -> None:
 _CSHARP_RUNS = {
     "csharp-ok": ("csharp-ok", None, "PASS", "PASS", "PASS", "100.0%", 0),
     "csharp-build-fail": ("csharp-build-fail", None, "FAIL", "SKIP", "SKIP", "SKIP", 1),
-    "csharp-test-fail": ("csharp-test-fail", None, "PASS", "PASS", "FAIL", "FAIL", 1),
+    "csharp-test-fail": ("csharp-test-fail", None, "PASS", "PASS", "FAIL", "SKIP", 1),
     "csharp-lint-fail": ("csharp-lint-fail", None, "PASS", "FAIL", "PASS", "100.0%", 1),
-    "csharp-no-tests": ("csharp-no-tests", None, "PASS", "PASS", "SKIP", "SKIP", 0),
+    "csharp-no-tests": ("csharp-no-tests", None, "PASS", "PASS", "SKIP", "FAIL", 1),
     "csharp-missing-deps": ("csharp-ok", None, "WARN", "WARN", "WARN", "WARN", 0),
     "csharp-old-sdk": ("csharp-no-tests", [("Calc.csproj", "net8.0", "net99.0")],
                        "WARN", "WARN", "WARN", "SKIP", 0),
@@ -563,7 +563,7 @@ _RUST_RUNS = {
     "rust-build-fail": ("rust-build-fail", None, "FAIL", "SKIP", "SKIP", "SKIP", 1),
     "rust-test-fail": ("rust-test-fail", None, "PASS", "PASS", "FAIL", "SKIP", 1),
     "rust-lint-fail": ("rust-lint-fail", None, "PASS", "FAIL", "PASS", "SKIP", 1),
-    "rust-no-tests": ("rust-no-tests", None, "PASS", "PASS", "SKIP", "SKIP", 0),
+    "rust-no-tests": ("rust-no-tests", None, "PASS", "PASS", "SKIP", "FAIL", 1),
     "rust-workspace": ("rust-workspace", None, "PASS", "PASS", "PASS", "SKIP", 0),
     "rust-missing-deps": ("rust-missing-deps", None, "WARN", "WARN", "WARN", "SKIP", 0),
     "rust-old-toolchain": ("rust-ok", [("Cargo.toml", 'edition = "2021"',
@@ -717,9 +717,9 @@ _PHPUNIT_TESTS_ARGV = ["vendor/bin/phpunit", "--no-coverage", "--do-not-cache-re
 # "php" = php only; "" = nothing.
 _PHP_RUNS = {
     "php-unit-ok": ("php-unit-ok", "unit", "SKIP", "PASS", "PASS", "100.0%", "WARN", 0),
-    "php-unit-test-fail": ("php-unit-test-fail", "unit", "SKIP", "PASS", "FAIL", "FAIL", "WARN", 1),
+    "php-unit-test-fail": ("php-unit-test-fail", "unit", "SKIP", "PASS", "FAIL", "SKIP", "SKIP", 1),
     "php-unit-lint-fail": ("php-unit-lint-fail", "unit", "SKIP", "FAIL", "PASS", "100.0%", "WARN", 1),
-    "php-unit-no-tests": ("php-unit-no-tests", "unit", "SKIP", "PASS", "SKIP", _PCT, "WARN", 0),
+    "php-unit-no-tests": ("php-unit-no-tests", "unit", "SKIP", "PASS", "SKIP", "FAIL", "FAIL", 1),
     "php-unit-missing-deps": ("php-unit-ok", "", "SKIP", "SKIP", "SKIP", "SKIP", "SKIP", 0),
     "php-scripts": ("php-scripts", "composer", "SKIP", "PASS", "PASS", "SKIP", "SKIP", 0),
     "php-fixer-script": ("php-fixer-script", "composer", "SKIP", "WARN", "PASS", "SKIP", "SKIP", 0),
@@ -787,8 +787,6 @@ def _php_checks(tmp: Path) -> None:
         c = c_driver if driver else c_none
         want = [b, li, t, c]
         label = f"one table row, cells {' '.join(want)}"
-        if run == "php-unit-no-tests" and driver:
-            label = f"one table row, cells {b} {li} {t} <percent> or WARN"
         if skip_reason(run):
             check(run, label)
             check(run, f"exit code {want_exit}")
@@ -799,8 +797,6 @@ def _php_checks(tmp: Path) -> None:
         reports[run] = rep
         cells = _cells(out)
         ok = len(_rows(out)) == 1 and _cells_match(cells, want)
-        if run == "php-unit-no-tests" and driver:
-            ok = ok or (len(_rows(out)) == 1 and cells == [b, li, t, "WARN"])
         check(run, label, ok=ok, detail=f"got {_rows(out)}\n{out}{err}")
         check(run, f"exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
 
@@ -898,10 +894,10 @@ _RB_SPEC = "spec/calc_spec.rb"
 _RUBY_RUNS = {
     "ruby-rspec-ok": ("ruby-rspec-ok", None, "gems", "SKIP", "PASS", "PASS", "80.0%", 0),
     "ruby-rspec-test-fail": ("ruby-rspec-ok", [(_RB_SPEC, "eq(5)", "eq(6)")], "gems",
-                             "SKIP", "PASS", "FAIL", "FAIL", 1),
+                             "SKIP", "PASS", "FAIL", "SKIP", 1),
     "ruby-rspec-lint-fail": ("ruby-rspec-ok", [(_RB_CALC, "    first + second", "    unused = 1\n    first + second")],
                              "gems", "SKIP", "FAIL", "PASS", _PCT, 1),
-    "ruby-rspec-no-specs": ("ruby-rspec-ok", None, "gems", "SKIP", "PASS", "SKIP", "SKIP", 0),
+    "ruby-rspec-no-specs": ("ruby-rspec-ok", None, "gems", "SKIP", "PASS", "SKIP", "FAIL", 1),
     "ruby-rspec-missing-gems": ("ruby-rspec-ok", None, "bundle", "SKIP", "WARN", "WARN", "WARN", 0),
     "ruby-standard": ("ruby-standard", None, "standard", "SKIP", "FAIL", "SKIP", "SKIP", 1),
     "ruby-require-typo": ("ruby-ok", [("test_calc.rb", 'require_relative "calc"', 'require_relative "calcc"')],
@@ -999,8 +995,10 @@ def _ruby_checks(tmp: Path) -> None:
     rep = reports.get("ruby-rspec-no-specs")
     entries = {s: _entry(rep, s) for s in ("tests", "coverage")}
     results = (((rep or {}).get("projects") or [{}])[0].get("coverage") or {}).get("results", [])
-    check("ruby-rspec-no-specs", "tests and coverage skipped with reason no_tests_found, no coverage results",
-          ok=all(e.get("status") == "skipped" and e.get("reason") == "no_tests_found" for e in entries.values())
+    check("ruby-rspec-no-specs", "tests skipped and coverage fail, both with reason no_tests_found, "
+          "no coverage results",
+          ok=entries["tests"].get("status") == "skipped" and entries["coverage"].get("status") == "fail"
+          and all(e.get("reason") == "no_tests_found" for e in entries.values())
           and not results,
           detail=f"entries={entries} results={results}")
 
@@ -1046,14 +1044,14 @@ _SW_SWIFT_FORMAT = ["swift", "format", "lint", "--strict", "--recursive", "."]
 _SWIFT_RUNS = {
     "swift-ok": ("swift-ok", None, "", "PASS", "PASS", "PASS", "100.0%", 0),
     "swift-build-fail": ("swift-build-fail", None, "", "FAIL", "SKIP", "SKIP", "SKIP", 1),
-    "swift-test-fail": ("swift-test-fail", None, "", "PASS", "PASS", "FAIL", "FAIL", 1),
+    "swift-test-fail": ("swift-test-fail", None, "", "PASS", "PASS", "FAIL", "SKIP", 1),
     "swift-lint-fail": ("swift-lint-fail", None, "", "PASS", "FAIL", "PASS", "100.0%", 1),
     "swift-no-linter": ("swift-no-linter", None, "", "PASS", "WARN", "PASS", "100.0%", 0),
-    "swift-no-tests": ("swift-no-tests", None, "", "PASS", "WARN", "SKIP", "SKIP", 0),
+    "swift-no-tests": ("swift-no-tests", None, "", "PASS", "WARN", "SKIP", "FAIL", 1),
     # A test class with no tests: XCTest runs 0 tests and exits 0.
     "swift-zero-tests": ("swift-no-linter",
                          [(_SW_TEST, "    func testSum() {\n        XCTAssertEqual(sum(2, 3), 5)\n    }\n", "")],
-                         "", "PASS", "WARN", "SKIP", "SKIP", 0),
+                         "", "PASS", "WARN", "SKIP", "FAIL", 1),
     # A misspelt import is a code error, not a missing dependency.
     "swift-typo-import": ("swift-no-linter", [(_SW_CALC, "public func sum", "import Foundaton\n\npublic func sum")],
                           "", "FAIL", "SKIP", "SKIP", "SKIP", 1),
@@ -1222,13 +1220,15 @@ def _swift_checks(tmp: Path) -> None:
           ok=e.get("command") == ["swiftc", "-parse", "scripts/Bad.swift"] and e.get("status") == "fail",
           detail=f"entry={e}")
 
-    # --- no tests: SKIP, no coverage_missing warning ---------------------------
+    # --- no tests: Tests SKIP, Coverage FAIL, no coverage_missing warning ------
     for run in ("swift-no-tests", "swift-zero-tests"):
         rep = reports.get(run)
         project = ((rep or {}).get("projects") or [{}])[0]
         entries = {s: _entry(rep, s) for s in ("tests", "coverage")}
-        check(run, "tests and coverage skipped with reason no_tests_found, no coverage_missing warning",
-              ok=all(e.get("status") == "skipped" and e.get("reason") == "no_tests_found" for e in entries.values())
+        check(run, "tests skipped and coverage fail, both with reason no_tests_found, "
+              "no coverage_missing warning",
+              ok=entries["tests"].get("status") == "skipped" and entries["coverage"].get("status") == "fail"
+              and all(e.get("reason") == "no_tests_found" for e in entries.values())
               and "coverage_missing" not in (project.get("warnings") or []),
               detail=f"entries={entries} warnings={project.get('warnings')}")
 

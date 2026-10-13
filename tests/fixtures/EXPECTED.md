@@ -3,6 +3,21 @@
 Discovery expectations for the `monorepo` fixture.
 Each entry is what `discover_projects` must return for that fixture folder.
 
+## Coverage after the tests stage (Session 22)
+
+These two rules apply to every language below.
+
+1. **Tests failed -> Coverage is skipped.** If the tests stage of a project ends `fail` or `timeout`, the coverage
+   stage does not run. Its result is `status="skipped"`, `reason="tests_failed"`, no commands. The table shows `SKIP`
+   and there is NO Details line for it (SKIP cells never get one).
+2. **No tests found -> Coverage fails.** If the tests stage ends `skipped` with `reason="no_tests_found"`, the coverage
+   stage does not run. Its result is `status="fail"`, `reason="no_tests_found"`, no commands. The table shows `FAIL`,
+   the Details line is `<project> / coverage: FAIL  no tests found`, and the exit code is 1.
+
+Both rules only apply when the tests stage actually ran in this run. A project with no tests command at all (tests
+`nothing_to_run`) is NOT "no tests found": coverage keeps its normal behaviour. With `--steps` that leaves out `tests`,
+there is no tests stage, so coverage runs as before.
+
 ---
 
 ## monorepo
@@ -551,6 +566,17 @@ and `pytest-cov` installed. No linter is configured.
 Report checks: the coverage entry has `"command": ["pytest", "--cov-report=xml"]` and
 `"source": "config"`; `projects[0].coverage.lowest_line_pct` is `83.3` (rounded to 1 decimal).
 
+Two more copies of `python-cov-addopts` (Session 22), same `calc.py`: `python-cov-no-tests` has no `test_calc.py`;
+`python-cov-test-fail` has `test_calc.py` with `assert add(2, 3) == 6`.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `python-cov-no-tests` | SKIP | WARN | SKIP | FAIL | 1 | no test files: pytest prints `no tests ran` and exits 5; Details `. / coverage: FAIL  no tests found` |
+| `python-cov-test-fail` | SKIP | WARN | FAIL | SKIP | 1 | `add(2, 3) == 6`; coverage reason `tests_failed`, not run |
+
+Report checks: `python-cov-no-tests` tests `skipped` and coverage `fail`, both reason `no_tests_found`, coverage
+`command` null; `python-cov-test-fail` coverage `skipped`, reason `tests_failed`, `command` null.
+
 ### python-cov-both (Session 20)
 
 Same `calc.py` and `test_calc.py`. `pyproject.toml` has both `addopts = "--cov=calc"` and
@@ -672,20 +698,21 @@ The other rows are **variants** that `tests/manual_java_check.py` makes in a tem
 |---|---|---|---|---|---|---|
 | `java-maven-ok` | PASS | PASS | PASS | 33.3% | 0 | build `mvn compile`; coverage from `target/site/jacoco/jacoco.xml` |
 | `java-maven-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | a compile error is `fail`, never `dependencies_missing` |
-| `java-maven-test-fail` | PASS | PASS | FAIL | 33.3% | 1 | tests output names `CalcTest` |
+| `java-maven-test-fail` | PASS | PASS | FAIL | SKIP | 1 | tests output names `CalcTest` |
 | `java-maven-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `mvn checkstyle:check` output names `Calc.java` |
-| `java-maven-no-tests` | PASS | PASS | SKIP | WARN | 0 | `No tests to run.`: tests `skipped`, reason `no_tests_found`; no coverage data |
+| `java-maven-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `No tests to run.`: tests `skipped` (`no_tests_found`), coverage `fail` (`no_tests_found`), not run |
 | `java-maven-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below); `lib` has no tests, `app` has one |
 | `java-gradle-ok` | PASS | PASS | PASS | 33.3% | 0 | build `gradle assemble`; coverage from `build/reports/jacoco/test/jacocoTestReport.xml` |
 | `java-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | |
-| `java-gradle-test-fail` | PASS | PASS | FAIL | 33.3% | 1 | the build stage does not run tests, so a test failure shows under Tests |
+| `java-gradle-test-fail` | PASS | PASS | FAIL | SKIP | 1 | the build stage does not run tests, so a test failure shows under Tests |
 | `java-gradle-lint-fail` | PASS | FAIL | PASS | 33.3% | 1 | `gradle checkstyleMain` output names `Calc.java` |
-| `java-gradle-no-tests` | PASS | PASS | SKIP | WARN | 0 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found` |
+| `java-gradle-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `> Task :test NO-SOURCE`: tests `skipped` (`no_tests_found`), coverage `fail` (`no_tests_found`), not run |
 | `java-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | one project (see below) |
 
 **No tests.** A Java project always has a tests command (`mvn test` / `gradle test`). When it passes but ran no
 test (languages.toml `no_tests_patterns` match the full log and `tests_ran_patterns` do not), the Tests cell is
 `SKIP` and the report entry is `status: skipped`, `reason: no_tests_found`, not a `PASS` with nothing behind it.
+Coverage is then `FAIL` (`no_tests_found`) and does not run (Session 22).
 
 **Multi-module.** `java-maven-multi` (root `pom.xml` lists modules `lib` and `app`; `app` depends on `lib`) and
 `java-gradle-multi` (`settings.gradle` includes `lib` and `app`) are reported as **one** project `.`: a Maven module
@@ -783,9 +810,9 @@ The other `-ok` rows are **variants** that `tests/manual_lang_check.py` makes in
 |---|---|---|---|---|---|---|
 | `kotlin-gradle-ok` | PASS | PASS | PASS | `<percent>` | 0 | build `gradle assemble` (report `command` `["gradle", "assemble"]`); lint `gradle detekt` |
 | `kotlin-gradle-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | build `fail`, never `dependencies_missing`; lint/tests reason `build_gate` |
-| `kotlin-gradle-test-fail` | PASS | PASS | FAIL | `<percent>` | 1 | the build stage does not run tests; tests output names `CalcTest` |
+| `kotlin-gradle-test-fail` | PASS | PASS | FAIL | SKIP | 1 | the build stage does not run tests; tests output names `CalcTest` |
 | `kotlin-gradle-lint-fail` | PASS | FAIL | PASS | `<percent>` | 1 | `gradle detekt` output names `Calc.kt`; tests still run |
-| `kotlin-gradle-no-tests` | PASS | PASS | SKIP | WARN | 0 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found`; no coverage data |
+| `kotlin-gradle-no-tests` | PASS | PASS | SKIP | FAIL | 1 | `> Task :test NO-SOURCE`: tests `skipped`, reason `no_tests_found`; coverage `fail` (`no_tests_found`), not run |
 | `kotlin-gradle-no-linter` | PASS | WARN | PASS | `<percent>` | 0 | no detekt / ktlint plugin: lint `no_linter_configured` |
 | `kotlin-gradle-multi` | PASS | WARN | PASS | SKIP | 0 | exactly **one** table row and one report project (see below) |
 
@@ -839,8 +866,8 @@ Tiny Go modules, standard library only unless stated. Commands are the Go toolch
 are checked by `tests/manual_lang_check.py go`; every fixture is copied to a temp folder and run with `--path <copy>`;
 the project is `.`, language `go` (tested since Session 14, so no `[untested]` label). Requires `go` (1.18+) on PATH;
 without it every Go run check is shown as `SKIP` (not run: go is not on PATH), and a `SKIP` never counts as passed. The `go-golangci-*` runs also need
-`golangci-lint` 2.x on PATH, else they show `SKIP` (not run: golangci-lint is not on PATH). `go-no-tests` needs Go 1.22
-or newer: older Go writes an empty profile for a package without tests, and Coverage shows `WARN`. `coverage.out` is
+`golangci-lint` 2.x on PATH, else they show `SKIP` (not run: golangci-lint is not on PATH). In `go-no-tests` the
+coverage command does not run (Tests found no tests, so Coverage is `FAIL`, `no_tests_found`). `coverage.out` is
 written into the project folder and ignored by each fixture's `.gitignore`.
 
 **Build writes no program file.** With exactly one `package main`, plain `go build ./...` saves the compiled program in
@@ -856,9 +883,9 @@ does.
 |---|---|---|---|---|---|---|
 | `go-ok` | PASS | PASS | PASS | 100.0% | 0 | |
 | `go-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 | syntax error; build gate skips the rest (`build_gate`) |
-| `go-test-fail` | PASS | PASS | FAIL | FAIL | 1 | asserts `Add(2, 3) == 6`; the coverage command runs the tests again, so it fails too |
+| `go-test-fail` | PASS | PASS | FAIL | SKIP | 1 | asserts `Add(2, 3) == 6`; coverage reason `tests_failed`: the coverage command no longer runs the tests again |
 | `go-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 | `go vet` (copylocks) rejects `Show(c Counter)`; `go test` does not run that check, so tests still pass |
-| `go-no-tests` | PASS | PASS | SKIP | 0.0% | 0 | no `_test.go`: `? ... [no test files]`, tests `skipped`, reason `no_tests_found` |
+| `go-no-tests` | PASS | PASS | SKIP | FAIL | 1 | no `_test.go`: `? ... [no test files]`, tests `skipped`, reason `no_tests_found`; coverage `fail`, not run |
 | `go-main` | PASS | PASS | PASS | 50.0% | 0 | one `package main`; `main` is not run by the test |
 | `go-missing-deps` | WARN | WARN | WARN | WARN | 0 | needs `github.com/google/uuid`; run with `GOPROXY=off`, `GOTOOLCHAIN=local` and an empty `GOMODCACHE` |
 | `go-old-toolchain` | WARN | WARN | WARN | WARN | 0 | temp copy of `go-ok` with `go 1.99` in `go.mod`; run with `GOTOOLCHAIN=local` |
@@ -933,15 +960,16 @@ Fixtures:
 |---|---|---|---|---|---|
 | `csharp-ok` | PASS | PASS | PASS | 100.0% | 0 |
 | `csharp-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 |
-| `csharp-test-fail` | PASS | PASS | FAIL | FAIL | 1 |
+| `csharp-test-fail` | PASS | PASS | FAIL | SKIP | 1 |
 | `csharp-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 |
-| `csharp-no-tests` | PASS | PASS | SKIP | SKIP | 0 |
+| `csharp-no-tests` | PASS | PASS | SKIP | FAIL | 1 |
 | `csharp-missing-deps` | WARN | WARN | WARN | WARN | 0 |
 | `csharp-old-sdk` | WARN | WARN | WARN | SKIP | 0 |
 
-Every run shows exactly one table row. `csharp-test-fail` Coverage is `FAIL` because the coverage command runs the
-tests again. `csharp-no-tests` and `csharp-old-sdk` have no coverage command (no `coverlet.collector`, no
-`*.runsettings`), so Coverage is `SKIP`.
+Every run shows exactly one table row. `csharp-test-fail` Coverage is `SKIP` (`tests_failed`): the coverage command
+does not run the tests again. `csharp-no-tests` has no coverage command (no `coverlet.collector`, no `*.runsettings`),
+but its tests found no tests, so Coverage is `FAIL` (`no_tests_found`). `csharp-old-sdk` has no coverage command and
+its tests stage is a warning, so Coverage is `SKIP`.
 
 **Report checks:**
 - `csharp-ok`: exactly one project, path `.` (the two `.csproj` are part of the solution); build `command` is
@@ -1037,7 +1065,7 @@ Fixtures:
 | `rust-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 |
 | `rust-test-fail` | PASS | PASS | FAIL | SKIP | 1 |
 | `rust-lint-fail` | PASS | FAIL | PASS | SKIP | 1 |
-| `rust-no-tests` | PASS | PASS | SKIP | SKIP | 0 |
+| `rust-no-tests` | PASS | PASS | SKIP | FAIL | 1 |
 | `rust-workspace` | PASS | PASS | PASS | SKIP | 0 |
 | `rust-missing-deps` | WARN | WARN | WARN | SKIP | 0 |
 | `rust-old-toolchain` | WARN | WARN | WARN | SKIP | 0 |
@@ -1145,9 +1173,9 @@ Fixtures:
 | Run | Made from | Needs | Build | Lint | Tests | Coverage (driver) | Coverage (no driver) | Exit |
 |---|---|---|---|---|---|---|---|---|
 | `php-unit-ok` | `php-unit-ok` | php, composer | SKIP | PASS | PASS | 100.0% | WARN | 0 |
-| `php-unit-test-fail` | `php-unit-test-fail` | php, composer | SKIP | PASS | FAIL | FAIL | WARN | 1 |
+| `php-unit-test-fail` | `php-unit-test-fail` | php, composer | SKIP | PASS | FAIL | SKIP | SKIP | 1 |
 | `php-unit-lint-fail` | `php-unit-lint-fail` | php, composer | SKIP | FAIL | PASS | 100.0% | WARN | 1 |
-| `php-unit-no-tests` | `php-unit-no-tests` | php, composer | SKIP | PASS | SKIP | *percentage* or WARN | WARN | 0 |
+| `php-unit-no-tests` | `php-unit-no-tests` | php, composer | SKIP | PASS | SKIP | FAIL | FAIL | 1 |
 | `php-unit-missing-deps` | copy of `php-unit-ok`, no `vendor/` | nothing | SKIP | SKIP | SKIP | SKIP | SKIP | 0 |
 | `php-scripts` | `php-scripts` | php, composer | SKIP | PASS | PASS | SKIP | SKIP | 0 |
 | `php-fixer-script` | `php-fixer-script` | php, composer | SKIP | WARN | PASS | SKIP | SKIP | 0 |
@@ -1269,9 +1297,9 @@ load, every other gem (minitest, rspec, ...) is hidden.
 | Run | Made from | Needs | Build | Lint | Tests | Coverage | Exit |
 |---|---|---|---|---|---|---|---|
 | `ruby-rspec-ok` | `ruby-rspec-ok` | ruby, bundle, gems | SKIP | PASS | PASS | 80.0% | 0 |
-| `ruby-rspec-test-fail` | copy of `ruby-rspec-ok`, `spec/calc_spec.rb`: `eq(5)` → `eq(6)` | ruby, bundle, gems | SKIP | PASS | FAIL | FAIL | 1 |
+| `ruby-rspec-test-fail` | copy of `ruby-rspec-ok`, `spec/calc_spec.rb`: `eq(5)` → `eq(6)` | ruby, bundle, gems | SKIP | PASS | FAIL | SKIP | 1 |
 | `ruby-rspec-lint-fail` | copy of `ruby-rspec-ok`, `lib/calc.rb`: `unused = 1` added before `first + second` | ruby, bundle, gems | SKIP | FAIL | PASS | a percentage | 1 |
-| `ruby-rspec-no-specs` | copy of `ruby-rspec-ok` without `spec/calc_spec.rb` | ruby, bundle, gems | SKIP | PASS | SKIP | SKIP | 0 |
+| `ruby-rspec-no-specs` | copy of `ruby-rspec-ok` without `spec/calc_spec.rb` | ruby, bundle, gems | SKIP | PASS | SKIP | FAIL | 1 |
 | `ruby-rspec-missing-gems` | copy of `ruby-rspec-ok`, empty gems folder | ruby, bundle | SKIP | WARN | WARN | WARN | 0 |
 | `ruby-standard` | `ruby-standard` | ruby, bundle, gem standard | SKIP | FAIL | SKIP | SKIP | 1 |
 | `ruby-require-typo` | copy of `ruby-ok`, `test_calc.rb`: `require_relative "calc"` → `"calcc"` | ruby | SKIP | PASS | FAIL | SKIP | 1 |
@@ -1286,7 +1314,7 @@ Report checks:
 - **ruby-rspec-test-fail**: tests `fail` (not `dependencies_missing`), output names `expected: 6`.
 - **ruby-rspec-lint-fail**: lint `fail`, output names `Lint/UselessAssignment`, and `lib/calc.rb` is byte-for-byte the
   edited file (RuboCop changed nothing).
-- **ruby-rspec-no-specs**: tests and coverage both `skipped`, reason `no_tests_found`; no coverage results.
+- **ruby-rspec-no-specs**: tests `skipped` and coverage `fail`, both reason `no_tests_found`; no coverage results.
 - **ruby-rspec-missing-gems**: lint, tests and coverage `dependencies_missing`; project warning `dependencies_missing`;
   no command `fail`.
 - **ruby-standard**: lint command `["bundle", "exec", "standardrb", "--no-fix"]`, status `fail`, output names
@@ -1333,8 +1361,8 @@ No tests line (minitest has no config file to detect) and no coverage line: cove
   `Line Coverage: 91.2%` (0.22) number is used.
 - **No tests.** RSpec `0 examples, 0 failures` and minitest `0 runs, 0 assertions` exit 0: Tests is `SKIP`
   (`no_tests_found`), never a vacuous PASS. A run with tests prints `N example(s), ...` / `N run(s), ...`.
-  `coverage_needs_tests = true` gives the coverage stage the same check (SimpleCov says 100% when no test ran), and no
-  coverage is read then.
+  `coverage_needs_tests = true` gives the coverage stage the same check (SimpleCov says 100% when no test ran): the
+  coverage stage then FAILS (`no_tests_found`) and no coverage is read.
 - **Dependencies.** `dependencies_missing` (WARN) is recognised by `Could not find gem '`, `Bundler::GemNotFound`,
   `Gem::MissingSpecError`, ``Run `bundle install` to install missing gems`` and
   ``Install missing gem executables with `bundle install` `` (Bundler 4 prints the last one for
@@ -1385,8 +1413,8 @@ shows WARN (`dependencies_missing`), and the manual check shows the Swift runs a
   covered), so they are not used. Swift writes no branch data: `branch_pct` is null.
 - **No tests.** A package with no test target: `swift test` prints `error: no tests found` and exits 1 → Tests `SKIP`
   (`no_tests_found`), not FAIL. A test target with no tests: XCTest prints `Executed 0 tests` and swift-testing
-  `Test run with 0 tests`, exit 0 → Tests `SKIP` (`no_tests_found`), not a vacuous PASS. Coverage is the tests run
-  again, so it is `SKIP` (`no_tests_found`) too, with no `coverage_missing` warning.
+  `Test run with 0 tests`, exit 0 → Tests `SKIP` (`no_tests_found`), not a vacuous PASS. Coverage then does not run:
+  it is `FAIL` (`no_tests_found`), with no `coverage_missing` warning.
 - **Dependency phrases** (`fail` → `dependencies_missing`, a warning): `error: Failed to clone repository ` and
   `Couldn't fetch updates from remote repositories` (SwiftPM could not download a package: offline or blocked),
   `is using Swift tools version ... but the installed version is ...` (`Package.swift` needs a newer Swift),
@@ -1413,11 +1441,11 @@ test class fails to compile.)
 |---|---|---|---|---|---|---|---|
 | `swift-ok` | `swift-ok` | | PASS | PASS | PASS | 100.0% | 0 |
 | `swift-build-fail` | `swift-build-fail` | | FAIL | SKIP | SKIP | SKIP | 1 |
-| `swift-test-fail` | `swift-test-fail` | | PASS | PASS | FAIL | FAIL | 1 |
+| `swift-test-fail` | `swift-test-fail` | | PASS | PASS | FAIL | SKIP | 1 |
 | `swift-lint-fail` | `swift-lint-fail` | | PASS | FAIL | PASS | 100.0% | 1 |
 | `swift-no-linter` | `swift-no-linter` | | PASS | WARN | PASS | 100.0% | 0 |
-| `swift-no-tests` | `swift-no-tests` (no test target) | | PASS | WARN | SKIP | SKIP | 0 |
-| `swift-zero-tests` | copy of `swift-no-linter`, `Tests/CalcTests/CalcTests.swift`: `testSum` removed (a test class with no tests) | | PASS | WARN | SKIP | SKIP | 0 |
+| `swift-no-tests` | `swift-no-tests` (no test target) | | PASS | WARN | SKIP | FAIL | 1 |
+| `swift-zero-tests` | copy of `swift-no-linter`, `Tests/CalcTests/CalcTests.swift`: `testSum` removed (a test class with no tests) | | PASS | WARN | SKIP | FAIL | 1 |
 | `swift-typo-import` | copy of `swift-no-linter`, `Sources/Calc/Calc.swift`: `import Foundaton` added | | FAIL | SKIP | SKIP | SKIP | 1 |
 | `swift-old-toolchain` | copy of `swift-no-linter`, `Package.swift`: `swift-tools-version:5.5` → `swift-tools-version:99.0` | | WARN | WARN | WARN | WARN | 0 |
 | `swift-missing-deps` | `swift-missing-deps` (depends on a package at `https://invalid.invalid/...`) | | WARN | WARN | WARN | WARN | 0 |
@@ -1442,8 +1470,8 @@ Report checks:
 - **swift-test-fail**: tests `fail`, output names `XCTAssertEqual failed`.
 - **swift-lint-fail**: lint command `["swiftc", "-parse", "scripts/Bad.swift"]`, status `fail` (`scripts/` is not part
   of the package).
-- **swift-no-tests**, **swift-zero-tests**: tests and coverage both `skipped`, reason `no_tests_found`; project warnings
-  do not include `coverage_missing`.
+- **swift-no-tests**, **swift-zero-tests**: tests `skipped` and coverage `fail`, both reason `no_tests_found`; project
+  warnings do not include `coverage_missing`.
 - **swift-old-toolchain**, **swift-missing-deps**: build `dependencies_missing`; project warning
   `dependencies_missing`; no command `fail`. swift-old-toolchain's build output names `99.0`, swift-missing-deps's
   names `invalid.invalid`.

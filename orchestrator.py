@@ -42,11 +42,20 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
   lang_cfg["tests_ran_patterns"] (regexes, re.MULTILINE).  E.g. Maven
   "No tests to run." with no "Tests run: N" line.  The table shows SKIP.
   A language with coverage_needs_tests = true gets the same check on its
-  coverage stage (no coverage is read then); e.g. Ruby, where SimpleCov says 100%.
+  coverage stage; the coverage stage then FAILS with reason no_tests_found
+  (no coverage is read); e.g. Ruby, where SimpleCov says 100%.
   no_tests_fail_patterns: a tests (or, with coverage_needs_tests, coverage)
   stage that FAILED only because the runner found no tests (log matches one of
-  these and none of tests_ran_patterns) is also skipped, reason no_tests_found.
-  E.g. Swift's "error: no tests found" for a package with no test target.
+  these and none of tests_ran_patterns) gets reason no_tests_found too: tests
+  skipped, coverage fail.  E.g. Swift's "error: no tests found" for a package
+  with no test target.
+- Tests failed -> coverage skipped: if the tests stage ran in this run and
+  failed or timed out, the coverage stage does not run (status="skipped",
+  reason="tests_failed").
+- No tests found -> coverage fails: if the tests stage ran in this run and
+  found no tests (reason no_tests_found), the coverage stage does not run
+  (status="fail", reason="no_tests_found").  A tests stage with no command
+  (nothing_to_run) or --steps without tests leaves coverage alone.
 - Per-stage timeouts from opts (build 10m, lint 5m, tests 15m, coverage 15m).
 - Each command result: status, duration_s, output_tail, log_path, findings=null.
 - On KeyboardInterrupt: mark current command interrupted, set result.interrupted=True,
@@ -451,6 +460,20 @@ def run_project(
             )
             continue
 
+        # --- Coverage after the tests stage --------------------------
+        tests_st = next((s for s in result.stages if s.stage == "tests"), None)
+        if stage == "coverage" and tests_st is not None:
+            if tests_st.status in ("fail", "timeout"):
+                result.stages.append(
+                    StageResult(stage=stage, status="skipped", reason="tests_failed")
+                )
+                continue
+            if tests_st.reason == "no_tests_found":
+                result.stages.append(
+                    StageResult(stage=stage, status="fail", reason="no_tests_found")
+                )
+                continue
+
         # --- no_linter_configured ------------------------------------
         if stage == "lint" and not cmds:
             result.stages.append(
@@ -539,7 +562,7 @@ def run_project(
         ):
             for rec in stage_result.commands:
                 rec.status = "skipped"
-            stage_result.status = "skipped"
+            stage_result.status = "fail" if stage == "coverage" else "skipped"
             stage_result.reason = "no_tests_found"
 
         # --- Coverage file reading (Session 8) -----------------------

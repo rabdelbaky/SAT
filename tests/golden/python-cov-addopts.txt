@@ -7,7 +7,7 @@
 cells: . SKIP WARN PASS WARN
 exit: 0
 ## fail
-cells: . SKIP WARN FAIL FAIL
+cells: . SKIP WARN FAIL SKIP
 exit: 1
 ## missing
 cells: . SKIP WARN WARN WARN

@@ -189,9 +189,9 @@ def test_no_test_target_is_skipped(tmp_path):
     assert (stage.status, stage.reason) == ("skipped", "no_tests_found")
 
 
-def test_coverage_with_no_test_target_is_skipped(tmp_path):
+def test_coverage_with_no_test_target_fails(tmp_path):
     stage = _run_stage(tmp_path, "coverage", _NO_TEST_TARGET, _SWIFT)
-    assert (stage.status, stage.reason, stage.coverage_data) == ("skipped", "no_tests_found", None)
+    assert (stage.status, stage.reason, stage.coverage_data) == ("fail", "no_tests_found", None)
 
 
 def test_failing_test_still_fails(tmp_path):

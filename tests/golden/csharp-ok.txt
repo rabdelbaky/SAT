@@ -6,8 +6,8 @@
   tests: dotnet test App.sln  [builtin]
   coverage: dotnet test App.sln --collect:XPlat Code Coverage  [config]
 ## ok
-cells: . PASS PASS SKIP WARN
-exit: 0
+cells: . PASS PASS SKIP FAIL
+exit: 1
 ## fail
 cells: . FAIL SKIP SKIP SKIP
 exit: 1

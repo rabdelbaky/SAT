@@ -209,9 +209,9 @@ def _run_coverage(tmp_path: Path, printed: str, lang_cfg: dict):
     return next(s for s in result.stages if s.stage == "coverage")
 
 
-def test_coverage_with_no_tests_is_skipped(tmp_path):
+def test_coverage_with_no_tests_fails(tmp_path):
     stage = _run_coverage(tmp_path, "0 examples, 0 failures", _RUBY)
-    assert (stage.status, stage.reason, stage.coverage_data) == ("skipped", "no_tests_found", None)
+    assert (stage.status, stage.reason, stage.coverage_data) == ("fail", "no_tests_found", None)
 
 
 def test_coverage_with_tests_passes(tmp_path):

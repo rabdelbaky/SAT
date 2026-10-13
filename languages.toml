@@ -10,6 +10,11 @@ dep_folders       = []
 dep_error_phrases = ["ModuleNotFoundError", "No module named", "unrecognized arguments: --cov"]
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.xml", ".coverage"]
+# pytest exits 5 with "no tests ran" when it collects nothing; unittest prints
+# "Ran 0 tests".  That run is Tests SKIP (no_tests_found), not FAIL.
+no_tests_patterns      = ['''^Ran 0 tests in ''']
+no_tests_fail_patterns = ['''no tests ran in [\d.]+m?s''', '''^Ran 0 tests in ''']
+tests_ran_patterns     = ['''\b[1-9]\d* (passed|failed)\b''', '''^Ran [1-9]\d* tests? in ''']
 # Promoted after Session 10: every applicable python-* fixture passed.
 tested            = true
 

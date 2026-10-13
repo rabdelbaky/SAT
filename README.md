@@ -62,6 +62,7 @@ flowchart LR
 - **Find projects**: a project is a folder with a build file (`package.json`, `pom.xml`, `pyproject.toml`, ...). Folders like `node_modules`, `.git`, `build`, `dist`, `target`, `vendor` and `.venv` are skipped.
 - **Plan commands**: for each stage it picks the commands the project defines (see below).
 - **Build gate**: if Build fails or times out, the other stages of that project are skipped. `--lint-anyway` still runs Lint. Leaving `build` out of `--steps` turns the gate off. Each project is independent.
+- **Tests gate**: if Tests fail or time out, Coverage is skipped and not run. If Tests ran but found no tests, Tests is `SKIP` and Coverage is `FAIL` ("no tests found"), so the exit code is 1. A project with no tests command at all, or a run whose `--steps` leaves out `tests`, is not affected.
 - **Timeouts**: Build 10m, Lint 5m, Tests 15m, Coverage 15m. Change them with `--timeout-build 90s`, `--timeout-tests 1h30m`, and so on. On a timeout the whole process tree is killed.
 - **Ctrl+C**: the running command's process tree is killed, it is marked `interrupted`, the report is still written, and the exit code is 130.
 - **Coverage**: it reads JaCoCo XML, Cobertura XML, Istanbul json-summary, lcov and a few more, but only files written during this run. If there is none, it tries to read a percentage from the output. The table shows the lowest line percentage. There is no threshold.
@@ -87,10 +88,10 @@ Each table cell shows the worst result of that stage.
 | Cell | Meaning |
 |---|---|
 | `PASS` | Every command passed. For Coverage, the lowest line percentage is shown instead (e.g. `72.0%`). |
-| `FAIL` | A command failed. |
+| `FAIL` | A command failed, or Coverage when no tests were found. |
 | `TIMEOUT` | A command ran out of time. Counts as a failure. |
 | `WARN` | Not a code failure: no linter configured, tool not installed, dependencies missing, or no coverage data. |
-| `SKIP` | Did not run: build gate, nothing to run, no tests found, or the stage was not asked for. |
+| `SKIP` | Did not run: build gate, tests failed (Coverage), nothing to run, no tests found (Tests), or the stage was not asked for. |
 | `INTR` | Interrupted by Ctrl+C. |
 
 | Exit code | Meaning |

@@ -14,6 +14,7 @@ command is the detected `pytest` (from [tool.pytest.ini_options]).
 python-detect-ini is checked with --dry-run only.
 python-cov-addopts also needs `pytest-cov` (coverage comes from pytest's own
 addopts); python-cov-both is checked with --dry-run only.
+python-cov-no-tests and python-cov-test-fail also need pytest and pytest-cov.
 Exit code: 0 if all checks pass, 1 if any fail.
 """
 
@@ -46,6 +47,8 @@ _EXPECTED = {
     "python-no-tests": ("SKIP", "PASS", "SKIP", "SKIP", 0),
     "python-no-linter": ("SKIP", "WARN", "PASS", "SKIP", 0),
     "python-cov-addopts": ("SKIP", "WARN", "PASS", "83.3%", 0),
+    "python-cov-no-tests": ("SKIP", "WARN", "SKIP", "FAIL", 1),
+    "python-cov-test-fail": ("SKIP", "WARN", "FAIL", "SKIP", 1),
 }
 
 
@@ -173,6 +176,38 @@ def run_checks() -> int:
             "python-cov-addopts: report coverage lowest_line_pct is 83.3",
             ok=isinstance(pct, (int, float)) and round(pct, 1) == 83.3,
             detail=f"coverage={cov}",
+        )
+
+        n += 1
+        tests = _stage_entry(reports["python-cov-no-tests"], "tests")
+        entry = _stage_entry(reports["python-cov-no-tests"], "coverage")
+        _check(
+            n,
+            "python-cov-no-tests: tests skipped (no_tests_found), coverage fail "
+            "(no_tests_found), coverage not run",
+            ok=tests.get("status") == "skipped"
+            and tests.get("reason") == "no_tests_found"
+            and entry.get("status") == "fail"
+            and entry.get("reason") == "no_tests_found"
+            and entry.get("command") is None,
+            detail=f"tests={tests} coverage={entry}",
+        )
+        n += 1
+        _check(
+            n,
+            "python-cov-no-tests: stdout says 'coverage: FAIL  no tests found'",
+            ok="coverage: FAIL  no tests found" in outputs["python-cov-no-tests"],
+            detail=outputs["python-cov-no-tests"],
+        )
+        n += 1
+        entry = _stage_entry(reports["python-cov-test-fail"], "coverage")
+        _check(
+            n,
+            "python-cov-test-fail: coverage skipped (tests_failed), coverage not run",
+            ok=entry.get("status") == "skipped"
+            and entry.get("reason") == "tests_failed"
+            and entry.get("command") is None,
+            detail=f"entry={entry}",
         )
 
         # --- python-detect: detection only, --dry-run ----------------------

@@ -184,6 +184,8 @@ def _detail(pr: ProjectResult, st: StageResult, word: str, repo_root: Path) -> s
         ):
             return "dependencies missing"
         return "no coverage data" if st.stage == "coverage" else st.status
+    if word == "FAIL" and st.reason == "no_tests_found":
+        return "no tests found"
     # FAIL / TIMEOUT / INTR: show the first command with that word
     for rec in st.commands:
         if _word(rec.status) == word:
