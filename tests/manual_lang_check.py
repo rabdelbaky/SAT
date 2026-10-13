@@ -53,6 +53,13 @@ ruby-standard the gem standard, already installed by the user: neither this
 check nor the tool ever installs gems, and nothing needs internet.  Missing
 ones are shown as SKIP.  The missing-gem runs use an empty GEM_HOME/GEM_PATH.
 
+Swift (see _swift_checks) runs real `swift` with XCTest: full Xcode on Mac (the
+Command Line Tools alone have no XCTest), the Swift toolchain on Windows/Linux.
+The swift-swiftlint*, swift-swiftformat* and swift-swift-format* runs need
+SwiftLint, SwiftFormat and `swift format` (Swift 6 / Xcode 16) and show SKIP
+without them.  swift-missing-deps names a package at a .invalid host, so it
+needs no internet.
+
 Every fixture is copied to a temp folder first; the repo is never written.
 Exit code: 0 if no check FAILED, 1 otherwise.
 """
@@ -1024,6 +1031,190 @@ def _ruby_checks(tmp: Path) -> None:
           ok=e.get("status") == "dependencies_missing" and "minitest/autorun" in _tail(e), detail=f"tests={e}")
 
 
+# ---------------------------------------------------------------------------
+# Swift: real swift / swiftlint / swiftformat / swift format runs
+# ---------------------------------------------------------------------------
+
+_SW_CALC = "Sources/Calc/Calc.swift"
+_SW_TEST = "Tests/CalcTests/CalcTests.swift"
+_SW_SWIFTLINT = ["swiftlint", "lint", "--quiet"]
+_SW_SWIFTFORMAT = ["swiftformat", "--lint", "."]
+_SW_SWIFT_FORMAT = ["swift", "format", "lint", "--strict", "--recursive", "."]
+
+# run name -> (fixture, edits, extra tool needed, build, lint, tests, coverage, exit)
+# extra tool: "" (swift only), "swiftlint", "swiftformat", "swift format".
+_SWIFT_RUNS = {
+    "swift-ok": ("swift-ok", None, "", "PASS", "PASS", "PASS", "100.0%", 0),
+    "swift-build-fail": ("swift-build-fail", None, "", "FAIL", "SKIP", "SKIP", "SKIP", 1),
+    "swift-test-fail": ("swift-test-fail", None, "", "PASS", "PASS", "FAIL", "FAIL", 1),
+    "swift-lint-fail": ("swift-lint-fail", None, "", "PASS", "FAIL", "PASS", "100.0%", 1),
+    "swift-no-linter": ("swift-no-linter", None, "", "PASS", "WARN", "PASS", "100.0%", 0),
+    "swift-no-tests": ("swift-no-tests", None, "", "PASS", "WARN", "SKIP", "SKIP", 0),
+    # A test class with no tests: XCTest runs 0 tests and exits 0.
+    "swift-zero-tests": ("swift-no-linter",
+                         [(_SW_TEST, "    func testSum() {\n        XCTAssertEqual(sum(2, 3), 5)\n    }\n", "")],
+                         "", "PASS", "WARN", "SKIP", "SKIP", 0),
+    # A misspelt import is a code error, not a missing dependency.
+    "swift-typo-import": ("swift-no-linter", [(_SW_CALC, "public func sum", "import Foundaton\n\npublic func sum")],
+                          "", "FAIL", "SKIP", "SKIP", "SKIP", 1),
+    "swift-old-toolchain": ("swift-no-linter", [("Package.swift", "swift-tools-version:5.5", "swift-tools-version:99.0")],
+                            "", "WARN", "WARN", "WARN", "WARN", 0),
+    "swift-missing-deps": ("swift-missing-deps", None, "", "WARN", "WARN", "WARN", "WARN", 0),
+    "swift-swiftlint": ("swift-swiftlint", None, "swiftlint", "PASS", "PASS", "PASS", "100.0%", 0),
+    "swift-swiftlint-fail": ("swift-swiftlint", [(_SW_CALC, "    a + b", "    return a + b;")],
+                             "swiftlint", "PASS", "FAIL", "PASS", "100.0%", 1),
+    "swift-swiftformat": ("swift-swiftformat", None, "swiftformat", "PASS", "PASS", "PASS", "100.0%", 0),
+    "swift-swiftformat-fail": ("swift-swiftformat", [(_SW_CALC, "    a + b", "  a + b")],
+                               "swiftformat", "PASS", "FAIL", "PASS", "100.0%", 1),
+    "swift-swift-format": ("swift-swift-format", None, "swift format", "PASS", "PASS", "PASS", "100.0%", 0),
+    "swift-swift-format-fail": ("swift-swift-format", [(_SW_CALC, "    a + b", "  a + b")],
+                                "swift format", "PASS", "FAIL", "PASS", "100.0%", 1),
+}
+
+
+def _swift_format_available() -> bool:
+    """True if `swift format --version` exits 0 (swift-format ships with Swift 6 / Xcode 16)."""
+    try:
+        proc = subprocess.run([shutil.which("swift"), "format", "--version"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _swift_checks(tmp: Path) -> None:
+    no_swift = "" if shutil.which("swift") else "swift is not on PATH"
+    extra = {
+        "": "",
+        "swiftlint": "" if shutil.which("swiftlint") else "swiftlint is not on PATH",
+        "swiftformat": "" if shutil.which("swiftformat") else "swiftformat is not on PATH",
+        "swift format": "" if no_swift or _swift_format_available()
+        else "swift format is not available (needs Swift 6 / Xcode 16)",
+    }
+
+    def skip_reason(run: str) -> str:
+        return no_swift or extra[_SWIFT_RUNS[run][2]]
+
+    def check(run: str, text: str, *, ok: bool = False, detail: str = "") -> None:
+        _check(f"{run}: {text}", ok=ok, detail=detail, skip=skip_reason(run), what="Swift")
+
+    # git must never wait for a password when the download fails.
+    envs = {"swift-missing-deps": {"GIT_TERMINAL_PROMPT": "0"}}
+
+    # Sources/Calc/Calc.swift of the *-fail lint runs right after the edit.
+    edited: dict[str, bytes] = {}
+
+    def keep_edited(run: str):
+        return lambda work: edited.update({run: (work / _SW_CALC).read_bytes()})
+
+    reports: dict[str, dict | None] = {}
+    announced = False
+    for run, (fixture, edits, _, b, li, t, c, want_exit) in _SWIFT_RUNS.items():
+        want = [b, li, t, c]
+        if skip_reason(run):
+            check(run, f"one table row, cells {' '.join(want)}")
+            check(run, f"exit code {want_exit}")
+            continue
+        if not announced:
+            print("      the first Swift runs build each package (about 20 s each) ...", flush=True)
+            announced = True
+        print(f"      running {run} (real Swift) ...", flush=True)
+        with _env(**envs.get(run, {})):
+            code, out, err, rep = _run(fixture, tmp, copy_name=run, edits=edits, prepare=keep_edited(run))
+        reports[run] = rep
+        check(run, f"one table row, cells {' '.join(want)}",
+              ok=len(_rows(out)) == 1 and _cells(out) == want, detail=f"got {_rows(out)}\n{out}{err}")
+        check(run, f"exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
+
+    # --- swift-ok --------------------------------------------------------------
+    rep = reports.get("swift-ok")
+    entries = {s: _entry(rep, s) for s in ("build", "tests", "coverage")}
+    commands = {s: e.get("command") for s, e in entries.items()}
+    check("swift-ok", "commands swift build / swift test / swift test --enable-code-coverage, all pass",
+          ok=commands == {"build": ["swift", "build"], "tests": ["swift", "test"],
+                          "coverage": ["swift", "test", "--enable-code-coverage"]}
+          and all(e.get("status") == "pass" for e in entries.values()),
+          detail=f"entries={entries}")
+    check("swift-ok", "tests output names 'Executed 1 test'",
+          ok="Executed 1 test" in _tail(entries["tests"]), detail=f"tests={entries['tests']}")
+    results = (((rep or {}).get("projects") or [{}])[0].get("coverage") or {}).get("results", [])
+    r = results[0] if len(results) == 1 else {}
+    source = str(r.get("source_file", ""))
+    check("swift-ok", "coverage read from .build/<platform>/debug/codecov/swift-ok.json by the llvmcov reader "
+          "(line 100.0, branch null)",
+          ok=r.get("format") == "llvmcov" and r.get("line_pct") == 100.0
+          and "branch_pct" in r and r["branch_pct"] is None
+          and source.startswith(".build/") and source.endswith("/debug/codecov/swift-ok.json"),
+          detail=f"results={results}")
+    runners = ((rep or {}).get("environment") or {}).get("runners", {})
+    check("swift-ok", "environment records the swift version",
+          ok=runners.get("swift", "unknown") != "unknown", detail=f"runners={runners}")
+    own = {p.name for p in (_FIXTURES / "swift-ok").iterdir()}
+    left = {p.name for p in (tmp / "swift-ok").iterdir()} if (tmp / "swift-ok").exists() else set()
+    check("swift-ok", "copy holds only fixture files, .build and .pre-llm",
+          ok=left == own | {".build", ".pre-llm"},
+          detail=f"extra={sorted(left - own)} missing={sorted(own - left)}")
+
+    # --- build failures: a code error, never dependencies_missing --------------
+    for run in ("swift-build-fail", "swift-typo-import"):
+        rep = reports.get(run)
+        e = _entry(rep, "build")
+        reasons = [_entry(rep, s).get("reason") for s in ("lint", "tests", "coverage")]
+        check(run, "build is fail (not dependencies_missing), the rest skipped by build_gate",
+              ok=e.get("status") == "fail" and reasons == ["build_gate"] * 3,
+              detail=f"entry={e} reasons={reasons}")
+    e = _entry(reports.get("swift-typo-import"), "build")
+    check("swift-typo-import", "build output names \"no such module 'Foundaton'\"",
+          ok="no such module 'Foundaton'" in _tail(e), detail=f"entry={e}")
+
+    e = _entry(reports.get("swift-test-fail"), "tests")
+    check("swift-test-fail", "tests is fail and output names 'XCTAssertEqual failed'",
+          ok=e.get("status") == "fail" and "XCTAssertEqual failed" in _tail(e), detail=f"tests={e}")
+
+    e = _entry(reports.get("swift-lint-fail"), "lint")
+    check("swift-lint-fail", "lint command is swiftc -parse scripts/Bad.swift, status fail",
+          ok=e.get("command") == ["swiftc", "-parse", "scripts/Bad.swift"] and e.get("status") == "fail",
+          detail=f"entry={e}")
+
+    # --- no tests: SKIP, no coverage_missing warning ---------------------------
+    for run in ("swift-no-tests", "swift-zero-tests"):
+        rep = reports.get(run)
+        project = ((rep or {}).get("projects") or [{}])[0]
+        entries = {s: _entry(rep, s) for s in ("tests", "coverage")}
+        check(run, "tests and coverage skipped with reason no_tests_found, no coverage_missing warning",
+              ok=all(e.get("status") == "skipped" and e.get("reason") == "no_tests_found" for e in entries.values())
+              and "coverage_missing" not in (project.get("warnings") or []),
+              detail=f"entries={entries} warnings={project.get('warnings')}")
+
+    # --- setup problems: dependencies_missing, nothing fail --------------------
+    for run, name in (("swift-old-toolchain", "99.0"), ("swift-missing-deps", "invalid.invalid")):
+        rep = reports.get(run)
+        project = ((rep or {}).get("projects") or [{}])[0]
+        failed = [c.get("stage") for c in project.get("commands", []) if c.get("status") == "fail"]
+        e = _entry(rep, "build")
+        check(run, f"build is dependencies_missing and names '{name}', project warning dependencies_missing, "
+              "nothing fail",
+              ok=e.get("status") == "dependencies_missing" and name in _tail(e)
+              and "dependencies_missing" in (project.get("warnings") or []) and not failed,
+              detail=f"build={e} warnings={project.get('warnings')} failed={failed}")
+
+    # --- lint tools from config files: read-only ------------------------------
+    for run, argv, finding in (
+        ("swift-swiftlint", _SW_SWIFTLINT, "trailing_semicolon"),
+        ("swift-swiftformat", _SW_SWIFTFORMAT, "(indent)"),
+        ("swift-swift-format", _SW_SWIFT_FORMAT, "[Indentation]"),
+    ):
+        e = _entry(reports.get(run), "lint")
+        check(run, f"lint command is {' '.join(argv)}, status pass",
+              ok=e.get("command") == argv and e.get("status") == "pass", detail=f"entry={e}")
+        fail_run = f"{run}-fail"
+        e = _entry(reports.get(fail_run), "lint")
+        copy = tmp / fail_run / _SW_CALC
+        same = copy.exists() and fail_run in edited and copy.read_bytes() == edited[fail_run]
+        check(fail_run, f"lint is fail, output names '{finding}', {_SW_CALC} unchanged",
+              ok=e.get("status") == "fail" and finding in _tail(e) and same,
+              detail=f"{_SW_CALC} unchanged={same} entry={e}")
+
+
 LANGS: dict[str, Lang] = {
     "csharp": Lang(
         detect={
@@ -1098,6 +1289,19 @@ LANGS: dict[str, Lang] = {
             ]
         },
         custom=_rust_checks,
+    ),
+    "swift": Lang(
+        detect={
+            "swift-detect": [
+                "build: swift build  [builtin]",
+                "lint: swiftlint lint --quiet  [config]",
+                "lint: swiftformat --lint .  [config]",
+                "lint: swift format lint --strict --recursive .  [config]",
+                "tests: swift test  [builtin]",
+                "coverage: swift test --enable-code-coverage  [builtin]",
+            ]
+        },
+        custom=_swift_checks,
     ),
 }
 

@@ -43,6 +43,10 @@ Rules (SPEC §3 steps 5–7, §5, §6, §8–9):
   "No tests to run." with no "Tests run: N" line.  The table shows SKIP.
   A language with coverage_needs_tests = true gets the same check on its
   coverage stage (no coverage is read then); e.g. Ruby, where SimpleCov says 100%.
+  no_tests_fail_patterns: a tests (or, with coverage_needs_tests, coverage)
+  stage that FAILED only because the runner found no tests (log matches one of
+  these and none of tests_ran_patterns) is also skipped, reason no_tests_found.
+  E.g. Swift's "error: no tests found" for a package with no test target.
 - Per-stage timeouts from opts (build 10m, lint 5m, tests 15m, coverage 15m).
 - Each command result: status, duration_s, output_tail, log_path, findings=null.
 - On KeyboardInterrupt: mark current command interrupted, set result.interrupted=True,
@@ -378,6 +382,7 @@ def run_project(
     dep_error_patterns: list[str] = lang_cfg.get("dep_error_patterns", [])
     no_tests_patterns: list[str] = lang_cfg.get("no_tests_patterns", [])
     tests_ran_patterns: list[str] = lang_cfg.get("tests_ran_patterns", [])
+    no_tests_fail_patterns: list[str] = lang_cfg.get("no_tests_fail_patterns", [])
     dep_declared_keys: list[str] = lang_cfg.get("dep_declared_keys", [])
 
     # Filter to only the requested steps
@@ -522,8 +527,12 @@ def run_project(
         # --- Tests that ran no test: SKIP, not a vacuous PASS --------
         if (
             (stage == "tests" or (stage == "coverage" and lang_cfg.get("coverage_needs_tests")))
-            and stage_result.status == "pass"
-            and _ran_no_tests(stage_result.commands, no_tests_patterns, tests_ran_patterns)
+            and (
+                (stage_result.status == "pass"
+                 and _ran_no_tests(stage_result.commands, no_tests_patterns, tests_ran_patterns))
+                or (stage_result.status == "fail"
+                    and _ran_no_tests(stage_result.commands, no_tests_fail_patterns, tests_ran_patterns))
+            )
         ):
             for rec in stage_result.commands:
                 rec.status = "skipped"
