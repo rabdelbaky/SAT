@@ -42,7 +42,8 @@ _ORDINARY_FAILURES = {
               "error: cannot find 'foo' in scope", "Test Case '-[CalcTests.CalcTests testSum]' failed (0.001 seconds).",
               "Sources/Calc/Calc.swift:1:8: error: no such module 'Foundaton'",
               "error: 'pkg': product 'Thing' required by package 'pkg' target 'Calc' not found in package 'swift-thing'.",
-              "error: no tests found; create a target in the 'Tests' directory"],
+              "error: no tests found; create a target in the 'Tests' directory",
+              "Sources/Calc/shim.h:1:10: error: 'mylib.h' file not found"],
     "ruby": ["calc.rb:3: syntax error, unexpected end-of-input",
              "Failure:\nCalcTest#test_add [test_calc.rb:5]:\nExpected: 6\n  Actual: 5",
              "test_calc.rb:4:in `require_relative': cannot load such file -- /home/u/p/calcc (LoadError)",
@@ -79,7 +80,9 @@ _MISSING_DEPENDENCIES = {
               "--show-sdk-platform-path output:\n    xcrun: error: unable to lookup item 'PlatformPath' "
               "from command line tools installation\n\nerror: XCTest not available",
               "SourceKittenFramework/library_wrapper.swift:63: Fatal error: Loading "
-              "sourcekitdInProc.framework/Versions/A/sourcekitdInProc failed. Tried:"],
+              "sourcekitdInProc.framework/Versions/A/sourcekitdInProc failed. Tried:",
+              "C:\\x\\clang\\include\\mm_malloc.h:13:10: error: 'stdlib.h' file not found\n"
+              "<unknown>:0: error: could not build C module 'SwiftShims'"],
     "ruby": ["Could not find gem 'rspec' in locally installed gems.",
              "cannot load such file -- minitest/autorun (LoadError)",
              "bundler: command not found: rspec\nInstall missing gem executables with `bundle install`",

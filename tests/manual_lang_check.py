@@ -1100,11 +1100,36 @@ def _xctest_available() -> bool:
     return proc.returncode == 0
 
 
+_NO_VC_TOOLS = "Visual Studio C++ tools not installed (Swift on Windows needs them)"
+
+
+def _vc_tools_available() -> bool:
+    """Windows: True if vswhere finds a Visual Studio with the C++ tools (Swift on Windows
+    needs them and the Windows SDK).  Other platforms: always True."""
+    if sys.platform != "win32":
+        return True
+    vswhere = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                           "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    if not os.path.isfile(vswhere):
+        return False
+    try:
+        proc = subprocess.run([vswhere, "-latest", "-products", "*", "-requires",
+                               "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                               "-property", "installationPath"],
+                              shell=False, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
 def _swift_checks(tmp: Path) -> None:
     no_swift = "" if shutil.which("swift") else "swift is not on PATH"
     if not no_swift and not _xctest_available():
         no_swift = _NO_XCTEST
         print(f"      {_NO_XCTEST}", flush=True)
+    if not no_swift and not _vc_tools_available():
+        no_swift = _NO_VC_TOOLS
+        print(f"      {_NO_VC_TOOLS}", flush=True)
     extra = {
         "": "",
         "swiftlint": "" if shutil.which("swiftlint") else "swiftlint is not on PATH",

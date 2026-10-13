@@ -1334,7 +1334,9 @@ On macOS the Swift runs need **full Xcode**: the Command Line Tools have no XCTe
 `error: XCTest not available`), and SwiftLint needs Xcode's SourceKit (without it SwiftLint crashes with
 `Loading sourcekitdInProc ... failed`). Without Xcode the tool shows WARN (`dependencies_missing`) for Tests, Coverage
 and SwiftLint, and the manual check shows every Swift run as SKIP (not run: XCTest not available: install full Xcode and
-run `sudo xcode-select -s /Applications/Xcode.app`); swift-detect still runs.
+run `sudo xcode-select -s /Applications/Xcode.app`); swift-detect still runs. On Windows, Swift needs Visual Studio's
+C++ tools and the Windows SDK; without them every build fails with `could not build C module 'SwiftShims'`, the tool
+shows WARN (`dependencies_missing`), and the manual check shows the Swift runs as SKIP.
 
 ### Rules
 

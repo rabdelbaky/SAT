@@ -627,10 +627,13 @@ dep_folders       = []
 # NOT "no such module" alone: a misspelt import prints it too (a real code error).
 # "XCTest not available": `swift test` on macOS without Xcode (Command Line Tools only).
 # "Loading sourcekitdInProc": SwiftLint crashes without Xcode's SourceKit.
+# "SwiftShims": Swift on Windows without Visual Studio's C++ tools / Windows SDK (no C
+# library headers); Swift's own runtime module, never broken by user code.
 dep_error_phrases  = ["error: Failed to clone repository ",
                       "Couldn't fetch updates from remote repositories",
                       "no such module 'XCTest'", "no such module 'Testing'",
-                      "error: XCTest not available", "Loading sourcekitdInProc"]
+                      "error: XCTest not available", "Loading sourcekitdInProc",
+                      "could not build C module 'SwiftShims'"]
 dep_error_patterns = ['''is using Swift tools version \S+ but the installed version is ''',
                       '''unknown or missing subcommand 'swift-format'''']
 stages            = ["build", "lint", "tests", "coverage"]
