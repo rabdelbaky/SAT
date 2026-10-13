@@ -439,7 +439,10 @@ dep_error_phrases = ["failed to download from `", "offline mode (", "requires ru
                      "no such command: `", "is not installed for the toolchain"]
 # Network fetch of the registry or a git dependency failed.  Not a path
 # dependency ("unable to update /some/folder" is a real project error).
-dep_error_patterns = ['''unable to update (registry `|https?://|ssh://|git@)''']
+# A missing linker (no Visual Studio C++ Build Tools on Windows, no `cc` on
+# macOS/Linux) is a setup problem too.  Not "linking with `cc` failed": that is
+# a real link error in the project's code.
+dep_error_patterns = ['''unable to update (registry `|https?://|ssh://|git@)''', '''^error: linker `[^`]+` not found''']
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["cobertura.xml", "lcov.info"]
 # cargo test prints "running N tests" once per test target (unit, integration,

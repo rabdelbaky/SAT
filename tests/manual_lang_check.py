@@ -544,6 +544,8 @@ _RUST_RUNS = {
     "rust-old-toolchain": ("rust-ok", [("Cargo.toml", 'edition = "2021"',
                                         'edition = "2021"\nrust-version = "1.999"')],
                            "WARN", "WARN", "WARN", "SKIP", 0),
+    # Run with a linker that does not exist (see _rust_checks): only tests links.
+    "rust-no-linker": ("rust-ok", None, "PASS", "PASS", "WARN", "SKIP", 0),
     # Coverage cell is set in _rust_checks: a percentage with cargo-tarpaulin, else WARN.
     "rust-tarpaulin": ("rust-tarpaulin", None, "PASS", "PASS", "PASS", "", 0),
 }
@@ -564,6 +566,9 @@ def _rust_checks(tmp: Path) -> None:
         # Offline, with an empty cargo home, so a copy of itoa cached on this PC
         # cannot make it pass (and no internet is needed).
         "rust-missing-deps": {"CARGO_NET_OFFLINE": "true", "CARGO_HOME": str(tmp / "cargohome")},
+        # A linker that does not exist, as on Windows without the C++ Build Tools
+        # (needs no real linker, so it works on any PC with cargo).
+        "rust-no-linker": {"RUSTFLAGS": "-C linker=pre-llm-no-such-linker"},
     }
     (tmp / "cargohome").mkdir()
 
@@ -639,6 +644,17 @@ def _rust_checks(tmp: Path) -> None:
     e = _entry(reports.get("rust-old-toolchain"), "build")
     check("rust-old-toolchain", "build output names 'requires rustc 1.999'",
           ok="requires rustc 1.999" in _tail(e), detail=f"entry={e}")
+
+    rep = reports.get("rust-no-linker")
+    project = ((rep or {}).get("projects") or [{}])[0]
+    failed = [c.get("stage") for c in project.get("commands", []) if c.get("status") == "fail"]
+    e = _entry(rep, "tests")
+    check("rust-no-linker", "tests is dependencies_missing and names 'linker `pre-llm-no-such-linker` not found', "
+          "project warning dependencies_missing, nothing fail",
+          ok=e.get("status") == "dependencies_missing"
+          and "linker `pre-llm-no-such-linker` not found" in _tail(e)
+          and "dependencies_missing" in (project.get("warnings") or []) and not failed,
+          detail=f"tests={e} warnings={project.get('warnings')} failed={failed}")
 
     rep = reports.get("rust-tarpaulin")
     e = _entry(rep, "coverage")
