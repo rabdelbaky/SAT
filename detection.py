@@ -44,6 +44,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from discovery import solution_projects
+
 
 # ---------------------------------------------------------------------------
 # Public data types
@@ -264,12 +266,25 @@ def _build_file_text(project: "Project") -> str:
     A plugin that is only mentioned in a comment (or commented out) is not
     declared.  pom.xml: <!-- --> comments.  Gradle scripts: /* */ and //
     comments (a // inside a URL string cuts the rest of that line, which
-    never holds a plugin id).
+    never holds a plugin id).  A .sln / .slnx: the solution text plus each
+    .csproj it lists (XML comments removed; unreadable files skipped), since
+    packages such as coverlet.collector are referenced there.
     """
+    build_file = project.path / project.primary_build_file
+    if project.primary_build_file.endswith((".sln", ".slnx")):
+        try:
+            parts = [build_file.read_text(encoding="utf-8-sig", errors="replace")]
+        except OSError:
+            return ""
+        for csproj in sorted(solution_projects(build_file)):
+            try:
+                text = csproj.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            parts.append(_XML_COMMENT.sub("", text))
+        return "\n".join(parts)
     try:
-        text = (project.path / project.primary_build_file).read_text(
-            encoding="utf-8", errors="replace"
-        )
+        text = build_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
     if project.primary_build_file.endswith(".xml"):
@@ -460,7 +475,16 @@ def _builtin_commands_for_stage(
         argv = shlex.split(raw)
     except ValueError:
         argv = raw.split()
-    return [StageCommand(command=argv, source="builtin")]
+    return [StageCommand(command=_fill_build_file(argv, project), source="builtin")]
+
+
+def _fill_build_file(argv: list[str], project: "Project") -> list[str]:
+    """Replace every argument that is exactly ``{build_file}`` with the primary build file.
+
+    .NET: a folder with both a .sln and a .csproj makes plain ``dotnet format``
+    fail and plain ``dotnet test`` run nothing, so every command names the file.
+    """
+    return [project.primary_build_file if a == "{build_file}" else a for a in argv]
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +567,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
             continue
         if not _config_rule_matches(project, rule):
             continue
-        argv = _command_for_script_value(rule.get("command", ""))
+        argv = _fill_build_file(_command_for_script_value(rule.get("command", "")), project)
         if not argv:
             continue
         key = tuple(argv)

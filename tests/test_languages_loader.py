@@ -59,7 +59,7 @@ def test_load_languages_returns_all_11_languages():
     assert set(langs.keys()) == _EXPECTED_LANGUAGES
 
 
-_TESTED_LANGUAGES = {"python", "javascript", "java"}
+_TESTED_LANGUAGES = {"python", "javascript", "java", "kotlin", "go"}
 
 
 def test_only_promoted_languages_are_tested():

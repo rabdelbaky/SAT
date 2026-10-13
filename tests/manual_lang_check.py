@@ -24,6 +24,12 @@ Go (see _go_checks) runs real `go` (and `golangci-lint` 2.x for the go-golangci-
 fixtures); without them on PATH those checks are shown as SKIP.  go-missing-deps
 runs with GOPROXY=off and an empty module cache, so it needs no internet.
 
+C# (see _csharp_checks) runs real `dotnet` (.NET 8 SDK) and needs internet access
+to nuget.org the first time (xunit and coverlet are downloaded once into the NuGet
+cache; this tool installs nothing).  Without `dotnet` on PATH those checks are
+shown as SKIP.  csharp-missing-deps runs with an empty NUGET_PACKAGES folder and
+a RestoreSources folder that does not exist, so it needs no internet.
+
 Every fixture is copied to a temp folder first; the repo is never written.
 Exit code: 0 if no check FAILED, 1 otherwise.
 """
@@ -405,16 +411,126 @@ def _go_checks(tmp: Path) -> None:
           ok=e.get("status") == "fail" and same, detail=f"calc.go unchanged={same} entry={e}")
 
 
+# ---------------------------------------------------------------------------
+# C#: real dotnet runs
+# ---------------------------------------------------------------------------
+
+# run name -> (fixture, edits, build, lint, tests, coverage, exit)
+_CSHARP_RUNS = {
+    "csharp-ok": ("csharp-ok", None, "PASS", "PASS", "PASS", "100.0%", 0),
+    "csharp-build-fail": ("csharp-build-fail", None, "FAIL", "SKIP", "SKIP", "SKIP", 1),
+    "csharp-test-fail": ("csharp-test-fail", None, "PASS", "PASS", "FAIL", "FAIL", 1),
+    "csharp-lint-fail": ("csharp-lint-fail", None, "PASS", "FAIL", "PASS", "100.0%", 1),
+    "csharp-no-tests": ("csharp-no-tests", None, "PASS", "PASS", "SKIP", "SKIP", 0),
+    "csharp-missing-deps": ("csharp-ok", None, "WARN", "WARN", "WARN", "WARN", 0),
+    "csharp-old-sdk": ("csharp-no-tests", [("Calc.csproj", "net8.0", "net99.0")],
+                       "WARN", "WARN", "WARN", "SKIP", 0),
+}
+
+
+def _csharp_checks(tmp: Path) -> None:
+    no_dotnet = "" if shutil.which("dotnet") else "dotnet is not on PATH"
+
+    def check(run: str, text: str, *, ok: bool = False, detail: str = "") -> None:
+        _check(f"{run}: {text}", ok=ok, detail=detail, skip=no_dotnet, what=".NET")
+
+    envs = {
+        # An empty package cache, so packages cached on this PC cannot make it pass, and
+        # a feed folder that does not exist (MSBuild reads environment variables as
+        # properties, so restore looks only there and fails with NU1301).
+        "csharp-missing-deps": {"NUGET_PACKAGES": str(tmp / "nugetpkgs"),
+                                "RestoreSources": str(tmp / "nofeed")},
+    }
+    (tmp / "nugetpkgs").mkdir()
+
+    reports: dict[str, dict | None] = {}
+    for run, (fixture, edits, b, li, t, c, want_exit) in _CSHARP_RUNS.items():
+        want = [b, li, t, c]
+        if no_dotnet:
+            check(run, f"one table row, cells {' '.join(want)}")
+            check(run, f"exit code {want_exit}")
+            continue
+        print(f"      running {run} (real .NET) ...", flush=True)
+        with _env(**envs.get(run, {})):
+            code, out, err, rep = _run(fixture, tmp, copy_name=run, edits=edits)
+        reports[run] = rep
+        check(run, f"one table row, cells {' '.join(want)}",
+              ok=len(_rows(out)) == 1 and _cells(out) == want, detail=f"got {_rows(out)}\n{out}{err}")
+        check(run, f"exit code {want_exit}", ok=code == want_exit, detail=f"got {code}")
+
+    rep = reports.get("csharp-ok")
+    projects = (rep or {}).get("projects") or []
+    check("csharp-ok", "report has one project '.' (the two .csproj are part of the solution)",
+          ok=[p.get("path") for p in projects] == ["."],
+          detail=f"projects={[p.get('path') for p in projects]}")
+    e = _entry(rep, "build")
+    check("csharp-ok", "build command is dotnet build App.sln",
+          ok=e.get("command") == ["dotnet", "build", "App.sln"], detail=f"entry={e}")
+    results = ((projects or [{}])[0].get("coverage") or {}).get("results", [])
+    source = results[0].get("source_file", "") if len(results) == 1 else ""
+    check("csharp-ok", "coverage read from Calc.Tests/TestResults/<guid>/coverage.cobertura.xml (100.0)",
+          ok=len(results) == 1 and results[0].get("format") == "cobertura"
+          and results[0].get("line_pct") == 100.0
+          and source.startswith("Calc.Tests/TestResults/")
+          and source.endswith("/coverage.cobertura.xml"),
+          detail=f"results={results}")
+    runners = ((rep or {}).get("environment") or {}).get("runners", {})
+    check("csharp-ok", "environment records the dotnet version",
+          ok=runners.get("dotnet", "unknown") != "unknown", detail=f"runners={runners}")
+
+    rep = reports.get("csharp-build-fail")
+    e = _entry(rep, "build")
+    reasons = [_entry(rep, s).get("reason") for s in ("lint", "tests", "coverage")]
+    check("csharp-build-fail", "build is fail (not dependencies_missing) and names CS1002, "
+          "the rest skipped by build_gate",
+          ok=e.get("status") == "fail" and "CS1002" in _tail(e) and reasons == ["build_gate"] * 3,
+          detail=f"entry={e} reasons={reasons}")
+
+    e = _entry(reports.get("csharp-test-fail"), "tests")
+    check("csharp-test-fail", "tests is fail and output names 'Assert.Equal() Failure'",
+          ok=e.get("status") == "fail" and "Assert.Equal() Failure" in _tail(e), detail=f"tests={e}")
+
+    e = _entry(reports.get("csharp-lint-fail"), "lint")
+    copy = tmp / "csharp-lint-fail" / "Calc" / "Calc.cs"
+    original = _FIXTURES / "csharp-lint-fail" / "Calc" / "Calc.cs"
+    same = copy.exists() and copy.read_bytes() == original.read_bytes()
+    check("csharp-lint-fail", "lint is fail, names WHITESPACE, and Calc.cs is unchanged (dotnet format "
+          "changed nothing)",
+          ok=e.get("status") == "fail" and "WHITESPACE" in _tail(e) and same,
+          detail=f"Calc.cs unchanged={same} entry={e}")
+
+    rep = reports.get("csharp-no-tests")
+    e = _entry(rep, "build")
+    check("csharp-no-tests", "build command is dotnet build Calc.sln",
+          ok=e.get("command") == ["dotnet", "build", "Calc.sln"], detail=f"entry={e}")
+    e = _entry(rep, "lint")
+    check("csharp-no-tests", "lint is pass (dotnet format names Calc.sln next to Calc.csproj)",
+          ok=e.get("status") == "pass", detail=f"entry={e}")
+    e = _entry(rep, "tests")
+    check("csharp-no-tests", "tests skipped with reason no_tests_found",
+          ok=e.get("status") == "skipped" and e.get("reason") == "no_tests_found", detail=f"entry={e}")
+
+    for run in ("csharp-missing-deps", "csharp-old-sdk"):
+        rep = reports.get(run)
+        project = ((rep or {}).get("projects") or [{}])[0]
+        failed = [c.get("stage") for c in project.get("commands", []) if c.get("status") == "fail"]
+        check(run, "build is dependencies_missing, project warning dependencies_missing, nothing fail",
+              ok=_entry(rep, "build").get("status") == "dependencies_missing"
+              and "dependencies_missing" in (project.get("warnings") or []) and not failed,
+              detail=f"build={_entry(rep, 'build')} warnings={project.get('warnings')} failed={failed}")
+
+
 LANGS: dict[str, Lang] = {
     "csharp": Lang(
         detect={
             "csharp-detect": [
-                "build: dotnet build  [builtin]",
-                "lint: dotnet format --verify-no-changes  [builtin]",
-                "tests: dotnet test  [builtin]",
-                "coverage: dotnet test --collect:XPlat Code Coverage  [config]",
+                "build: dotnet build App.Tests.csproj  [builtin]",
+                "lint: dotnet format App.Tests.csproj --verify-no-changes  [builtin]",
+                "tests: dotnet test App.Tests.csproj  [builtin]",
+                "coverage: dotnet test App.Tests.csproj --collect:XPlat Code Coverage  [config]",
             ]
-        }
+        },
+        custom=_csharp_checks,
     ),
     "go": Lang(
         detect={

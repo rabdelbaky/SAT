@@ -289,7 +289,8 @@ coverage_files    = ["build/reports/jacoco/test/jacocoTestReport.xml"]
 # that executed.
 no_tests_patterns  = ['''^> Task \S*:test NO-SOURCE''']
 tests_ran_patterns = ['''^> Task \S*:test( UP-TO-DATE| FROM-CACHE)?\s*$''']
-tested            = false
+# Promoted after Session 14: every kotlin-* check passed with real Gradle.
+tested            = true
 
 # subproject_rules: a Gradle subproject (below a folder with
 # settings.gradle[.kts]) is built by that root build, so it is part of the
@@ -352,7 +353,8 @@ no_tests_patterns  = ['''^\?\s+\S+\s+\[no test files\]''', '''\[no tests to run\
 tests_ran_patterns = ['''^ok\s+\S+\s+(\(cached\)|[\d.]+m?s)(\s+coverage: .*)?\s*$''']
 stages            = ["build", "lint", "tests", "coverage"]
 coverage_files    = ["coverage.out"]
-tested            = false
+# Promoted after Session 14: every go-* check passed with real Go.
+tested            = true
 
 # -o /dev/null: build but write no program file into the project (with exactly one
 # package main, go build would save it there).  The runner passes NUL on Windows.
@@ -373,42 +375,54 @@ command = "golangci-lint run --fix=false"
 
 
 [language.csharp]
-# C#/.NET — keyed as "csharp".
+# C#/.NET — keyed as "csharp".  .slnx is the .NET 10 SDK's default solution format.
 extensions        = [".cs"]
-build_files       = ["*.sln", "*.csproj"]
-build_priority    = ["*.sln", "*.csproj"]
+build_files       = ["*.sln", "*.slnx", "*.csproj"]
+build_priority    = ["*.sln", "*.slnx", "*.csproj"]
 dep_folders       = []
-dep_error_phrases = ["error NU", "Unable to find package"]
+# dotnet downloads NuGet packages itself; these mean it could not (NU1100-NU1103:
+# package not found / no matching version; NU1301-NU1302: feed unreachable;
+# NETSDK1004: packages never restored; dotnet format: "Restore operation failed."),
+# or the installed SDK is older than the target framework (NETSDK1045).  Other NU
+# errors (e.g. NU1605, a package downgrade) are real project errors and stay FAIL.
+dep_error_phrases  = []
+dep_error_patterns = ['''error NU1(10[0-3]|30[12])\b''', '''error NETSDK1045\b''', '''error NETSDK1004\b''', '''Restore operation failed\.''']
+# dotnet test prints one "Passed!  - Failed: 0, Passed: N, ..." line per test project that ran.
+# A test project with no tests says "No test is available in ..."; a solution or project
+# with no test project prints no "Passed!" line at all.  Either way: SKIP, not PASS.
+no_tests_patterns  = ['''No test is available in''', '''\A(?![\s\S]*^Passed!\s+-)''']
+tests_ran_patterns = ['''^Passed!\s+-\s+Failed:\s+0,\s+Passed:\s+[1-9]''']
 stages            = ["build", "lint", "tests", "coverage"]
 # `dotnet test` writes TestResults/<guid>/coverage.cobertura.xml (in the test project folder).
 coverage_files    = ["**/TestResults/*/coverage.cobertura.xml"]
 tested            = false
 
-[language.csharp.stage_names]
-build    = ["build", "compile", "publish"]
-lint     = ["lint", "check", "format", "analyze"]
-tests    = ["test", "tests"]
-coverage = ["coverage", "cov"]
-
-[language.csharp.config_files]
-lint     = [".editorconfig", ".stylecop", "StyleCop.Analyzers.json"]
-tests    = []
-coverage = ["coverlet.runsettings", "*.runsettings"]
+# subproject_rules: a .csproj that a solution (.sln / .slnx) in an ancestor folder
+# lists is built by that solution, so it is part of the solution's project, not a
+# project of its own.  A .csproj the solution does not list stays its own project.
+# Keys are globs (solution names vary).
+[language.csharp.subproject_rules]
+"*.sln"  = "dotnet_solution"
+"*.slnx" = "dotnet_solution"
 
 # `dotnet format --verify-no-changes` is read-only and ships with the SDK, so every
 # .NET project has a linter.  Coverage is not built-in: the collector only works when the
 # test project references coverlet.collector (see config_commands).
+# {build_file} becomes the primary build file (the .sln/.slnx, else the .csproj): with
+# both in one folder, plain `dotnet format` fails and plain `dotnet test` runs no test.
 [language.csharp.builtin_phases]
-build    = ["dotnet build", "msbuild"]
-lint     = ["dotnet format --verify-no-changes"]
-tests    = ["dotnet test"]
+build    = ["dotnet build {build_file}"]
+lint     = ["dotnet format {build_file} --verify-no-changes"]
+tests    = ["dotnet test {build_file}"]
 coverage = []
 
+# For a solution, build_file_contains also reads every .csproj it lists (coverlet
+# is referenced by the test project, not the .sln).
 [[language.csharp.config_commands]]
 stage               = "coverage"
 build_file_contains = ["coverlet.collector"]
-files               = ["coverlet.runsettings", "*.runsettings"]
-command             = 'dotnet test --collect:"XPlat Code Coverage"'
+files               = ["*.runsettings"]
+command             = 'dotnet test {build_file} --collect:"XPlat Code Coverage"'
 
 
 [language.rust]

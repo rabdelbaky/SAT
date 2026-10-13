@@ -182,13 +182,13 @@ check(
 )
 
 # ---------------------------------------------------------------------------
-# Check 11: only python, javascript and java projects are tested
+# Check 11: only python, javascript, java, kotlin and go projects are tested
 # ---------------------------------------------------------------------------
 
-_TESTED = ("python", "javascript", "java")
+_TESTED = ("python", "javascript", "java", "kotlin", "go")
 wrong_tested = [p for p in projects if p.tested != (p.language in _TESTED)]
 check(
-    "monorepo: only python, javascript and java projects are tested",
+    "monorepo: only python, javascript, java, kotlin and go projects are tested",
     not wrong_tested,
     f"wrong tested flag: {[(str(p.path), p.language, p.tested) for p in wrong_tested]}",
 )
@@ -231,16 +231,17 @@ check(
 )
 
 # ---------------------------------------------------------------------------
-# Check 14: --dry-run lines contain [untested] except python, javascript and java (tested)
+# Check 14: --dry-run lines contain [untested] except python, javascript, java, kotlin and go
+# (tested)
 # ---------------------------------------------------------------------------
 
 labels_ok = all(
     ("[untested]" in line)
-    == (" python " not in line and " javascript " not in line and " java " not in line)
+    == (not any(f" {lang} " in line for lang in _TESTED))
     for line in output_lines
 )
 check(
-    "monorepo --dry-run: [untested] on every line except python, javascript and java",
+    "monorepo --dry-run: [untested] on every line except python, javascript, java, kotlin and go",
     labels_ok,
     f"lines: {output_lines}",
 )

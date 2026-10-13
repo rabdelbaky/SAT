@@ -192,14 +192,14 @@ def test_services_ml_primary_build_file_is_pyproject_toml():
 
 
 # ---------------------------------------------------------------------------
-# Cycle 8: tested flag matches languages.toml (python and javascript are tested)
+# Cycle 8: tested flag matches languages.toml (python, javascript, java, kotlin, go)
 # ---------------------------------------------------------------------------
 
 
 def test_only_promoted_fixture_projects_are_tested():
     result = discover_projects(FIXTURE_MONOREPO, LANGUAGES)
     for p in result:
-        assert p.tested is (p.language in ("python", "javascript")), (
+        assert p.tested is (p.language in ("python", "javascript", "java", "kotlin", "go")), (
             f"Project {p.path} ({p.language}) has tested={p.tested!r}"
         )
 

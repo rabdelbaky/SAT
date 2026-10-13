@@ -42,11 +42,11 @@ dist/                                 ← SKIPPED (dist is a skip folder)
 
 | Path (relative to fixture root) | Language   | Primary build file   | All build_files                           | tested   |
 |---------------------------------|------------|----------------------|-------------------------------------------|----------|
-| `.`                             | javascript | `package.json`       | `["package.json"]`                        | false    |
-| `packages/api`                  | javascript | `package.json`       | `["package.json"]`                        | false    |
-| `packages/ui`                   | javascript | `package.json`       | `["package.json"]`                        | false    |
+| `.`                             | javascript | `package.json`       | `["package.json"]`                        | true     |
+| `packages/api`                  | javascript | `package.json`       | `["package.json"]`                        | true     |
+| `packages/ui`                   | javascript | `package.json`       | `["package.json"]`                        | true     |
 | `services/ml`                   | python     | `pyproject.toml`     | `["pyproject.toml", "requirements.txt"]`  | true     |
-| `services/worker`               | go         | `go.mod`             | `["go.mod"]`                              | false    |
+| `services/worker`               | go         | `go.mod`             | `["go.mod"]`                              | true     |
 
 **Total: 5 projects**
 
@@ -77,11 +77,11 @@ the `[untested]` suffix is left off for a tested language):
 packages/api  javascript  package.json
 packages/ui  javascript  package.json
 services/ml  python  pyproject.toml, requirements.txt
-services/worker  go  go.mod  [untested]
+services/worker  go  go.mod
 ```
 
-*(Python is tested since Session 10, JavaScript since Session 11 and Java since Session 12; the others are `[untested]`
-until their fixtures pass; exact whitespace may vary.)*
+*(Python is tested since Session 10, JavaScript since Session 11, Java since Session 12, Kotlin and Go since Session 14;
+the others are `[untested]` until their fixtures pass; exact whitespace may vary.)*
 
 **No-project exit code**: running the tool against an empty folder must exit 3
 and print `No supported projects found.` to stderr.
@@ -433,7 +433,9 @@ proj-fail/
 
 Session 9. Not a folder fixture: `tests/test_output.py` builds these three projects in memory and
 compares `render_terminal(...)` to the block below, character for character
-(`python`/`go` are untested; `javascript` is tested).
+(the in-memory projects set `tested` themselves: `backend` (python) and `services/worker` (go) are built as untested
+to show the `[untested]` label, `web` (javascript) as tested; this is not read from languages.toml, where all three are
+tested).
 
 | Project | Build | Lint | Tests | Coverage |
 |---|---|---|---|---|
@@ -723,7 +725,8 @@ the first declared language (`java`). So `java-gradle-detect` (no sources) lists
 ## kotlin-* (Session 13)
 
 Kotlin builds with Gradle only. The fixtures are checked by `tests/manual_lang_check.py kotlin`; every fixture is
-copied to a temp folder and run with `--path <copy>`; the project is `.`, language `kotlin [untested]`.
+copied to a temp folder and run with `--path <copy>`; the project is `.`, language `kotlin` (tested since Session 14, so no
+`[untested]` label).
 
 ### Real Gradle runs
 
@@ -807,8 +810,8 @@ adds nothing (without the plugin Gradle has no `detekt` task), and Spotless's `k
 Tiny Go modules, standard library only unless stated. Commands are the Go toolchain's own built-ins:
 `go build -o /dev/null ./...`, `go vet ./...`, `go test ./...`, `go test -coverprofile=coverage.out ./...`. The fixtures
 are checked by `tests/manual_lang_check.py go`; every fixture is copied to a temp folder and run with `--path <copy>`;
-the project is `.`, language `go [untested]`. Requires `go` (1.18+) on PATH; without it every Go run check is shown as
-`SKIP` (not run: go is not on PATH), and a `SKIP` never counts as passed. The `go-golangci-*` runs also need
+the project is `.`, language `go` (tested since Session 14, so no `[untested]` label). Requires `go` (1.18+) on PATH;
+without it every Go run check is shown as `SKIP` (not run: go is not on PATH), and a `SKIP` never counts as passed. The `go-golangci-*` runs also need
 `golangci-lint` 2.x on PATH, else they show `SKIP` (not run: golangci-lint is not on PATH). `go-no-tests` needs Go 1.22
 or newer: older Go writes an empty profile for a package without tests, and Coverage shows `WARN`. `coverage.out` is
 written into the project folder and ignored by each fixture's `.gitignore`.
@@ -879,31 +882,92 @@ Without `.golangci.yml` the lint line is `lint: go vet ./...  [builtin]`.
 
 ## csharp-* (Session 15)
 
-C#/.NET projects need the .NET SDK, a target framework that matches the installed SDK, and NuGet restore, none of
-which can be assumed, so there are **no execution fixtures for C#** (the generic ok / build-fail / test-fail / lint-fail
-behaviour is covered by the other languages' fixtures through the same runner). C#-specific behaviour is detection and
-the coverage file location, checked by `tests/test_detection_csharp.py` and `--dry-run`.
+C#/.NET projects (`net8.0`, xunit, `coverlet.collector`). The fixtures are checked by `tests/manual_lang_check.py csharp`;
+every run is copied to a temp folder and run with `--path <copy>`; the project is `.`, language `csharp [untested]`.
+The runs need the **.NET 8 SDK** and internet access to nuget.org the first time (xunit and coverlet are downloaded
+once into the NuGet cache; this tool installs nothing). If `dotnet` is not on PATH, every C# run check is shown as
+`SKIP` (not run: dotnet is not on PATH); a `SKIP` never counts as passed. Each fixture's `.gitignore` lists `bin/`,
+`obj/` and (with a test project) `TestResults/`.
+
+Fixtures:
+- `csharp-ok`: `App.sln` lists `Calc/Calc.csproj` (`MathOps.Add`) and `Calc.Tests/Calc.Tests.csproj` (one xunit test,
+  `Assert.Equal(5, MathOps.Add(2, 3))`, references `coverlet.collector`).
+- `csharp-test-fail`: as `csharp-ok`, the test asserts `Assert.Equal(6, ...)`.
+- `csharp-lint-fail`: as `csharp-ok`, `Calc/Calc.cs` has three spaces after `public` on the `Add` line.
+- `csharp-build-fail`: only `Calc.csproj` and `Calc.cs` with the `;` missing after `a + b`.
+- `csharp-no-tests`: `Calc.sln`, `Calc.csproj` and `Calc.cs` in one folder, no test project.
+- `csharp-missing-deps` (no folder): a temp copy of `csharp-ok` run with `NUGET_PACKAGES=<tmp>/nugetpkgs` (an empty
+  folder, so packages cached on the PC cannot make it pass) and `RestoreSources=<tmp>/nofeed` (does not exist; MSBuild
+  reads environment variables as properties, so restore looks only there and fails with `NU1301`).
+- `csharp-old-sdk` (no folder): a temp copy of `csharp-no-tests` with `net8.0` changed to `net99.0` in `Calc.csproj`
+  (`NETSDK1045`).
+
+| Run | Build | Lint | Tests | Coverage | Exit |
+|---|---|---|---|---|---|
+| `csharp-ok` | PASS | PASS | PASS | 100.0% | 0 |
+| `csharp-build-fail` | FAIL | SKIP | SKIP | SKIP | 1 |
+| `csharp-test-fail` | PASS | PASS | FAIL | FAIL | 1 |
+| `csharp-lint-fail` | PASS | FAIL | PASS | 100.0% | 1 |
+| `csharp-no-tests` | PASS | PASS | SKIP | SKIP | 0 |
+| `csharp-missing-deps` | WARN | WARN | WARN | WARN | 0 |
+| `csharp-old-sdk` | WARN | WARN | WARN | SKIP | 0 |
+
+Every run shows exactly one table row. `csharp-test-fail` Coverage is `FAIL` because the coverage command runs the
+tests again. `csharp-no-tests` and `csharp-old-sdk` have no coverage command (no `coverlet.collector`, no
+`*.runsettings`), so Coverage is `SKIP`.
+
+**Report checks:**
+- `csharp-ok`: exactly one project, path `.` (the two `.csproj` are part of the solution); build `command` is
+  `["dotnet", "build", "App.sln"]`; coverage has exactly one result with `format` `cobertura`, `line_pct` 100.0 and a
+  `source_file` that starts with `Calc.Tests/TestResults/` and ends with `/coverage.cobertura.xml`;
+  `environment.runners` has a `dotnet` key that is not `unknown`.
+- `csharp-build-fail`: build `fail` (never `dependencies_missing`), its output names `CS1002`; lint, tests and coverage
+  reason `build_gate`.
+- `csharp-test-fail`: tests `fail`, its output names `Assert.Equal() Failure`.
+- `csharp-lint-fail`: lint `fail`, its output names `WHITESPACE`, and `Calc/Calc.cs` in the copy is byte for byte the
+  fixture's (`dotnet format --verify-no-changes` changed nothing).
+- `csharp-no-tests`: build `command` is `["dotnet", "build", "Calc.sln"]`; lint `pass`; tests `skipped`, reason
+  `no_tests_found`.
+- `csharp-missing-deps`, `csharp-old-sdk`: build `dependencies_missing`, project warnings include
+  `dependencies_missing`, no command is `fail`.
+
+Rules shown:
+- **`{build_file}`.** Every command names the primary build file (the `.sln` / `.slnx`, else the `.csproj`):
+  `dotnet build {build_file}`, `dotnet format {build_file} --verify-no-changes`, `dotnet test {build_file}`. In a folder
+  with both a `.sln` and a `.csproj`, plain `dotnet format` crashes ("Both a MSBuild project file and solution file
+  found") and plain `dotnet test` runs no test and exits 0. `csharp-no-tests` proves the fix (Lint `PASS`).
+- **Solutions.** A `.csproj` that a `.sln` / `.slnx` in an ancestor folder lists is built by that solution, so it is
+  part of the solution's project (like Maven modules and Gradle subprojects; languages.toml `subproject_rules`
+  `"*.sln"` / `"*.slnx"` = `dotnet_solution`). A `.csproj` the solution does not list stays its own project.
+  `.sln` wins over `.csproj` in one folder (both stay in `build_files`).
+- **`.slnx`.** The .NET 10 SDK writes `.slnx` (XML) by default; it is a build file like `.sln`, and every `Project`
+  element's `Path` (also inside `Folder`) counts as listed.
+- **No tests.** `dotnet test` prints one `Passed!  - Failed: 0, Passed: N, ...` line per test project that ran. A test
+  project with no tests prints `No test is available in ...`; a solution or project with no test project prints no
+  `Passed!` line. Either way Tests is `SKIP` (`no_tests_found`), never a vacuous `PASS`.
+- **Dependencies.** `dotnet` downloads NuGet packages itself. When it cannot (`error NU1100`-`NU1103`: package not
+  found / no matching version; `error NU1301`-`NU1302`: feed unreachable; `error NETSDK1004`: packages never restored;
+  `dotnet format`: `Restore operation failed.`) or the installed SDK is older than the target framework
+  (`error NETSDK1045`), that is a setup problem: `dependencies_missing` (WARN), not a failure. Other `NU` errors, such
+  as `NU1605` (package downgrade), are real project errors and stay `FAIL`.
+- **Coverage** is not built-in. It runs (`dotnet test {build_file} --collect:"XPlat Code Coverage"`) only when the
+  project file, or for a solution any `.csproj` it lists, references `coverlet.collector` (XML comments ignored), or a
+  `*.runsettings` file sits next to the build file. It is read from `**/TestResults/*/coverage.cobertura.xml` (where
+  `dotnet test` writes it, inside the test project folder, in a fresh GUID folder per run); files from earlier runs are
+  stale by mtime and ignored.
+- **Lint.** `dotnet format --verify-no-changes` ships with the SDK and never writes files, so every .NET project has a
+  linter (*no-linter* is not applicable).
 
 ### csharp-detect
 
-`App.Tests.csproj` references `coverlet.collector`. Expected lines after the project line (language `csharp`):
+`App.Tests.csproj` references `coverlet.collector`. Checked with `--dry-run`; nothing is run. Expected lines after the
+project line (language `csharp`):
 
 ```
-  build: dotnet build  [builtin]
-  lint: dotnet format --verify-no-changes  [builtin]
-  tests: dotnet test  [builtin]
-  coverage: dotnet test --collect:XPlat Code Coverage  [config]
+  build: dotnet build App.Tests.csproj  [builtin]
+  lint: dotnet format App.Tests.csproj --verify-no-changes  [builtin]
+  tests: dotnet test App.Tests.csproj  [builtin]
+  coverage: dotnet test App.Tests.csproj --collect:XPlat Code Coverage  [config]
 ```
 
 (the last argument is a single argument, `--collect:XPlat Code Coverage`; `--dry-run` joins arguments with spaces.)
-
-Rules shown:
-- `dotnet format --verify-no-changes` is read-only and ships with the SDK, so every .NET project has a linter
-  (*no-linter* is n/a).
-- Coverage is **not** built-in. It runs only when the project file references `coverlet.collector` or a `*.runsettings`
-  file sits next to it. A project without either has no coverage command (Coverage cell `SKIP`).
-- `.sln` wins over `.csproj` when both exist (both stay in `build_files`).
-- Coverage is read from `**/TestResults/*/coverage.cobertura.xml` (that is where `dotnet test` writes it, inside the test
-  project folder, in a fresh GUID folder per run); files from earlier runs are stale by mtime and ignored.
-
-**Not covered by fixtures:** a real `dotnet build` / `dotnet test` run. Try one by hand before marking C# `tested`.
