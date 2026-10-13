@@ -24,6 +24,7 @@
 | 12 | Fixtures: Java | tests/fixtures/java-* | Tick checklist |
 | 13+ | Remaining languages | one session each | Tick checklist |
 | 20 | Python coverage from pytest addopts (`--cov` in addopts runs `pytest --cov-report=xml`; `exclusive` rule key) | detection.py, languages.toml, tests/fixtures/python-cov-* | `python-cov-addopts` Coverage 83.3%, `python-cov-both` `--dry-run` |
+| 21 | Report counts, fake-tool golden tests, schema guard, README (`summary.counts` + `summary.generated_at`; `run_command` faked for 17 fixtures incl. generated C/C++; report key-path golden) | output.py, pre_llm_checks.py, tests/test_fake_runs.py, tests/test_report_schema.py, tests/golden_files.py, README.md | `UPDATE_GOLDEN=1` on Windows, review `tests/golden/`, commit; then plain `pytest` on Mac matches |
 
 Fixtures (10 to 13+) are tiny; ask the agent for several languages per session if quota allows. Split fixture ownership with your colleague and share results.
 

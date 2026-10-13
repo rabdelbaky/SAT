@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from discovery import (
@@ -30,7 +31,7 @@ from detection import (
     DetectionResult,
 )
 from masking import mask_secrets
-from output import collect_environment, probe_version, render_terminal
+from output import collect_environment, probe_version, render_terminal, stage_counts
 from orchestrator import (
     OrchestratorOptions,
     run_all,
@@ -183,7 +184,10 @@ def make_relative_path(path: Path | str, root: Path) -> str:
 # Report builder
 # ---------------------------------------------------------------------------
 
+# Any change to the report's shape must bump this; tests/test_report_schema.py
+# fails until it does (and its golden file and README.md are updated).
 _REPORT_SCHEMA_VERSION = "1.0"
+_COUNT_KEYS = ("pass", "fail", "timeout", "warning", "skipped", "interrupted")
 _REPORT_SIZE_CAP = 200_000  # bytes
 
 
@@ -247,6 +251,8 @@ def build_report(
     status: str = "pass",
     environment: dict | None = None,
     warnings: list[str] | None = None,
+    counts: dict | None = None,
+    generated_at: str | None = None,
 ) -> dict:
     """Assemble and return the full report dict (not yet written to disk).
 
@@ -260,6 +266,10 @@ def build_report(
         warnings: repo-level warnings (``gitignore_missing``,
             ``no_project: <folder>``, ...) for the top-level ``warnings`` list;
             always present, empty when there are none.
+        counts: per-status cell counts (``output.stage_counts``) for
+            ``summary.counts``; all six keys at 0 when not given.
+        generated_at: ISO 8601 time for ``summary.generated_at``; defaults to
+            now, in UTC, to the second.
 
     Returns:
         Ordered dict ready for JSON serialisation.
@@ -291,6 +301,9 @@ def build_report(
         "summary": {
             "status": status,
             "project_count": len(projects_data),
+            "counts": {k: (counts or {}).get(k, 0) for k in _COUNT_KEYS},
+            "generated_at": generated_at
+            or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         },
         "warnings": list(warnings or []),
         "projects": projects_out,
@@ -752,6 +765,7 @@ def main(argv: list[str] | None = None) -> int:
             status=summary_status,
             environment=environment,
             warnings=report_warnings,
+            counts=stage_counts(results),
         )
         write_report(report, output_path)
     except Exception as exc:  # noqa: BLE001

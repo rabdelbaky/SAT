@@ -16,6 +16,11 @@ cell_text(stage_result) -> str
 
 project_state(project_result) -> "passed" | "warnings" | "failed"
 
+stage_counts(results) -> dict[str, int]
+    {"pass", "fail", "timeout", "warning", "skipped", "interrupted"}: one count
+    per project per stage, from the same cell words the table shows (a
+    coverage percentage counts as pass).  All six keys, always.
+
 collect_environment(results, version_fn=probe_version, os_name=None) -> dict
     {"os": "...", "runners": {name: first line of --version | "unknown"}}
     for every executable that actually ran (SPEC §6).  Only known tools on
@@ -105,6 +110,29 @@ def project_state(pr: ProjectResult) -> str:
     if "WARN" in cells or pr.warnings:
         return "warnings"
     return "passed"
+
+
+# Cell word -> summary.counts key.  A coverage percentage ("72.0%") is a pass.
+_COUNT_KEYS = {
+    "PASS": "pass",
+    "FAIL": "fail",
+    "TIMEOUT": "timeout",
+    "WARN": "warning",
+    "SKIP": "skipped",
+    "INTR": "interrupted",
+}
+
+
+def stage_counts(results: list[ProjectResult]) -> dict[str, int]:
+    """Count the table cells of *results* by status (report ``summary.counts``).
+
+    Uses the same cell words as the table, so the two can never disagree.
+    """
+    counts = dict.fromkeys(_COUNT_KEYS.values(), 0)
+    for pr in results:
+        for cell in _cells(pr):
+            counts["pass" if cell.endswith("%") else _COUNT_KEYS[cell]] += 1
+    return counts
 
 
 # ---------------------------------------------------------------------------

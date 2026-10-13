@@ -5,7 +5,8 @@ Seams under test:
   - cap_output_tail(lines, max_lines, max_line_len) -> list[str]
   - cap_findings(findings, max_count) -> (list, true_total: int)
   - make_relative_path(path, root) -> str   (forward slashes, relative)
-  - build_report(projects_data, repo_root, tail_lines) -> dict
+  - build_report(projects_data, repo_root, tail_lines, *, counts, generated_at) -> dict
+  - output.stage_counts(results) -> dict  (summary.counts)
   - write_report(report, output_path, size_cap_bytes) -> None
 """
 
@@ -14,15 +15,21 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from coverage_readers import CoverageData, CoverageResult
+from discovery import Project
+from orchestrator import CommandRecord, ProjectResult, StageResult
+from output import stage_counts
 from pre_llm_checks import (
     build_report,
     cap_findings,
     cap_output_tail,
+    main,
     make_relative_path,
     mask_secrets,
     write_report,
@@ -431,3 +438,126 @@ def test_write_report_overwrites_existing_file(tmp_path):
     write_report(report, out, size_cap_bytes=200_000)
     data = json.loads(out.read_text(encoding="utf-8"))
     assert "schema_version" in data
+
+
+# ===========================================================================
+# Session 21 — summary.counts and summary.generated_at
+# ===========================================================================
+
+_ZERO_COUNTS = {
+    "pass": 0, "fail": 0, "timeout": 0, "warning": 0, "skipped": 0, "interrupted": 0,
+}
+
+
+def _stage_result(stage: str, status: str, cov: CoverageData | None = None) -> StageResult:
+    commands = []
+    if status not in ("skipped", "no_linter_configured"):
+        commands = [
+            CommandRecord(
+                command=["tool", stage],
+                source="override",
+                stage=stage,
+                status=status,
+                duration_s=1.0,
+                output_tail=[],
+                log_path=None,
+            )
+        ]
+    return StageResult(stage=stage, status=status, commands=commands, coverage_data=cov)
+
+
+def _project_result(name: str, stages: list[StageResult]) -> ProjectResult:
+    return ProjectResult(
+        project=Project(path=_ROOT / name, language="python", primary_build_file="x"),
+        stages=stages,
+    )
+
+
+def test_summary_keys_in_order():
+    report = build_report([], _ROOT, tail_lines=50)
+    assert list(report["summary"]) == ["status", "project_count", "counts", "generated_at"]
+
+
+def test_summary_counts_default_all_zero():
+    report = build_report([], _ROOT, tail_lines=50)
+    assert report["summary"]["counts"] == _ZERO_COUNTS
+    assert list(report["summary"]["counts"]) == list(_ZERO_COUNTS)
+
+
+def test_summary_counts_passed_through():
+    counts = {"pass": 3, "fail": 3, "timeout": 0, "warning": 0, "skipped": 2, "interrupted": 0}
+    report = build_report([], _ROOT, tail_lines=50, counts=counts)
+    assert report["summary"]["counts"] == counts
+
+
+def test_summary_generated_at_is_utc_iso():
+    report = build_report([], _ROOT, tail_lines=50)
+    stamp = report["summary"]["generated_at"]
+    assert stamp.endswith("+00:00")
+    assert datetime.fromisoformat(stamp).utcoffset().total_seconds() == 0
+
+
+def test_summary_generated_at_passed_through():
+    report = build_report([], _ROOT, tail_lines=50, generated_at="2026-10-13T13:10:14+00:00")
+    assert report["summary"]["generated_at"] == "2026-10-13T13:10:14+00:00"
+
+
+def test_stage_counts_from_table_cells():
+    covered = _project_result(
+        "a",
+        [
+            _stage_result("build", "pass"),
+            _stage_result("lint", "pass"),
+            _stage_result("tests", "pass"),
+            _stage_result(
+                "coverage", "pass", CoverageData(results=[CoverageResult(72.0, None, "f", "lcov")])
+            ),
+        ],
+    )
+    broken = _project_result(
+        "b",
+        [
+            _stage_result("build", "fail"),
+            _stage_result("lint", "no_linter_configured"),
+            _stage_result("tests", "skipped"),
+            # coverage stage missing entirely: the table shows SKIP
+        ],
+    )
+    assert stage_counts([covered, broken]) == {
+        "pass": 4, "fail": 1, "timeout": 0, "warning": 1, "skipped": 2, "interrupted": 0,
+    }
+
+
+def test_stage_counts_empty_is_all_zero():
+    assert stage_counts([]) == _ZERO_COUNTS
+
+
+def test_trim_keeps_summary_whole(tmp_path):
+    counts = {"pass": 1, "fail": 2, "timeout": 3, "warning": 4, "skipped": 5, "interrupted": 6}
+    cmds = [_minimal_command(output_tail=["x" * 400] * 50) for _ in range(20)]
+    report = build_report(
+        [_minimal_project_data(commands=cmds)],
+        _ROOT,
+        tail_lines=50,
+        counts=counts,
+        generated_at="2026-10-13T13:10:14+00:00",
+    )
+    out = tmp_path / "report.json"
+    write_report(report, out, size_cap_bytes=20_000)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["truncated"] is True
+    assert data["summary"] == report["summary"]
+
+
+@pytest.mark.parametrize("kind", ["bad_path", "no_project"])
+def test_early_exit_report_counts_all_zero(tmp_path, capsys, kind):
+    repo = tmp_path / "repo"
+    if kind == "no_project":
+        repo.mkdir()
+    out = tmp_path / "report.json"
+    code = main(["--path", str(repo), "--output", str(out)])
+    capsys.readouterr()
+    assert code == (2 if kind == "bad_path" else 3)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["summary"]["counts"] == _ZERO_COUNTS
+    assert data["summary"]["generated_at"].endswith("+00:00")
