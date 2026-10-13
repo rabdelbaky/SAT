@@ -536,6 +536,33 @@ No `pyproject.toml` and no `pre-llm.toml`; the build file is `requirements.txt`.
   coverage: pytest --cov --cov-report=xml  [config]
 ```
 
+### python-cov-addopts (Session 20)
+
+No `pre-llm.toml`. Coverage is turned on in pytest's own settings:
+`[tool.pytest.ini_options] addopts = "-q -p no:cacheprovider --cov=calc --cov-report=term"`. The
+project already chose what to measure (`calc`), so the coverage command only adds the XML report:
+`pytest --cov-report=xml` (no bare `--cov`, which would also count `test_calc.py`). Needs `pytest`
+and `pytest-cov` installed. No linter is configured.
+
+| Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
+|---|---|---|---|---|---|---|
+| `python-cov-addopts` | SKIP | WARN | PASS | 83.3% | 0 | `calc.py` has 6 statements; `return -1` is never run (5/6) |
+
+Report checks: the coverage entry has `"command": ["pytest", "--cov-report=xml"]` and
+`"source": "config"`; `projects[0].coverage.lowest_line_pct` is `83.3` (rounded to 1 decimal).
+
+### python-cov-both (Session 20)
+
+Same `calc.py` and `test_calc.py`. `pyproject.toml` has both `addopts = "--cov=calc"` and
+`[tool.coverage.run]`. The addopts rule is `exclusive`, so the `[tool.coverage]` rule adds no second
+pytest run. Nothing is installed or run: check it with `--dry-run`. Expected lines (after the project
+line), exactly these, no `build` and no `lint` line:
+
+```
+  tests: pytest  [config]
+  coverage: pytest --cov-report=xml  [config]
+```
+
 ---
 
 ## js-* (Session 11)

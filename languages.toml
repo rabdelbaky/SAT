@@ -69,6 +69,17 @@ pyproject_tables = ["tool.mypy"]
 ini_sections     = [["setup.cfg", "mypy"]]
 command          = "mypy ."
 
+# Coverage already turned on in pytest's own addopts (e.g. --cov=calc): the
+# project chose what to measure, so only add the XML report.  A bare --cov
+# would also measure the test files and give a different number.
+# exclusive: the [tool.coverage] rule below must not add a second pytest run.
+[[language.python.config_commands]]
+stage                = "coverage"
+addopts_contains     = ["--cov"]
+addopts_not_contains = ["--no-cov"]
+exclusive            = true
+command              = "pytest --cov-report=xml"
+
 [[language.python.config_commands]]
 stage            = "coverage"
 files            = [".coveragerc"]

@@ -1,0 +1,9 @@
+[project]
+name = "python-cov-both"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+addopts = "--cov=calc"
+
+[tool.coverage.run]
+branch = true

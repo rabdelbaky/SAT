@@ -12,12 +12,15 @@ Needs `python` on PATH (the fixtures' pre-llm.toml files call it).
 python-ok and python-test-fail also need `pytest` on PATH: their tests
 command is the detected `pytest` (from [tool.pytest.ini_options]).
 python-detect-ini is checked with --dry-run only.
+python-cov-addopts also needs `pytest-cov` (coverage comes from pytest's own
+addopts); python-cov-both is checked with --dry-run only.
 Exit code: 0 if all checks pass, 1 if any fail.
 """
 
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -42,6 +45,7 @@ _EXPECTED = {
     "python-lint-fail": ("SKIP", "FAIL", "PASS", "SKIP", 1),
     "python-no-tests": ("SKIP", "PASS", "SKIP", "SKIP", 0),
     "python-no-linter": ("SKIP", "WARN", "PASS", "SKIP", 0),
+    "python-cov-addopts": ("SKIP", "WARN", "PASS", "83.3%", 0),
 }
 
 
@@ -86,6 +90,9 @@ def _stage_entry(report: dict | None, stage: str) -> dict:
 
 def run_checks() -> int:
     os.chdir(_REPO_ROOT)
+    if importlib.util.find_spec("pytest_cov") is None:
+        print("FAIL  pytest-cov is not installed: python -m pip install pytest-cov")
+        _results.append((0, _FAIL, "pytest-cov is installed"))
     n = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -147,6 +154,27 @@ def run_checks() -> int:
             detail=outputs["python-no-linter"],
         )
 
+        n += 1
+        entry = _stage_entry(reports["python-cov-addopts"], "coverage")
+        _check(
+            n,
+            "python-cov-addopts: coverage entry is pytest --cov-report=xml (source config)",
+            ok=entry.get("command") == ["pytest", "--cov-report=xml"]
+            and entry.get("source") == "config",
+            detail=f"entry={entry}",
+        )
+        n += 1
+        cov = ((reports["python-cov-addopts"] or {}).get("projects") or [{}])[0].get(
+            "coverage"
+        ) or {}
+        pct = cov.get("lowest_line_pct")
+        _check(
+            n,
+            "python-cov-addopts: report coverage lowest_line_pct is 83.3",
+            ok=isinstance(pct, (int, float)) and round(pct, 1) == 83.3,
+            detail=f"coverage={cov}",
+        )
+
         # --- python-detect: detection only, --dry-run ----------------------
         code, out, err, _ = _run("python-detect", tmp, ["--dry-run"])
         lines = [ln.strip() for ln in out.splitlines()]
@@ -194,6 +222,24 @@ def run_checks() -> int:
             "python-detect-ini: no build command is listed",
             ok=not any(ln.startswith("build:") for ln in lines),
             detail=out,
+        )
+
+        # --- python-cov-both: addopts --cov plus [tool.coverage], --dry-run ---
+        code, out, err, _ = _run("python-cov-both", tmp, ["--dry-run"])
+        lines = [ln.strip() for ln in out.splitlines()]
+        stage_lines = [
+            ln for ln in lines if ln.split(":", 1)[0] in ("build", "lint", "tests", "coverage")
+        ]
+        want = [
+            "tests: pytest  [config]",
+            "coverage: pytest --cov-report=xml  [config]",
+        ]
+        n += 1
+        _check(
+            n,
+            "python-cov-both: --dry-run lists exactly pytest and pytest --cov-report=xml",
+            ok=stage_lines == want and code == 0,
+            detail=f"exit={code} stage_lines={stage_lines}\n{out}{err}",
         )
 
     print()

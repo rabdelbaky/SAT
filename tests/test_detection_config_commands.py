@@ -205,3 +205,87 @@ def test_invalid_setup_cfg_does_not_crash_and_adds_nothing(tmp_path):
 
 def test_real_languages_toml_has_no_python_config_files_table():
     assert "config_files" not in load_languages()["python"]
+
+
+# ---------------------------------------------------------------------------
+# Session 20: coverage turned on in pytest's own addopts (real languages.toml)
+# ---------------------------------------------------------------------------
+
+_ADDOPTS_COV = [["pytest", "--cov-report=xml"]]
+
+
+def _detect_py(tmp_path: Path, pyproject: str):
+    proj = _py(tmp_path, pyproject=pyproject)
+    return detect_commands(proj, load_languages()["python"])
+
+
+def test_addopts_cov_string_adds_xml_report_only(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest.ini_options]\naddopts = "--cov=calc"\n')
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+    assert r.commands["coverage"][0].source == "config"
+
+
+def test_addopts_cov_list(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest.ini_options]\naddopts = ["-q", "--cov"]\n')
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_addopts_cov_native_pytest_table(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest]\naddopts = ["--cov=calc"]\n')
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_addopts_cov_pytest_ini(tmp_path):
+    r = _detect_real(tmp_path, "pytest.ini", "[pytest]\naddopts = --cov=calc\n")
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_addopts_cov_setup_cfg(tmp_path):
+    r = _detect_real(tmp_path, "setup.cfg", "[tool:pytest]\naddopts = --cov=calc\n")
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_addopts_cov_tox_ini(tmp_path):
+    r = _detect_real(tmp_path, "tox.ini", "[pytest]\naddopts = --cov=calc\n")
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_addopts_cov_report_only_does_not_match(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest.ini_options]\naddopts = "--cov-report=term"\n')
+    assert _argv(r, "coverage") == []
+
+
+def test_addopts_cov_fail_under_only_does_not_match(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest.ini_options]\naddopts = "--cov-fail-under=80"\n')
+    assert _argv(r, "coverage") == []
+
+
+def test_addopts_no_cov_wins(tmp_path):
+    r = _detect_py(tmp_path, '[tool.pytest.ini_options]\naddopts = "--cov=calc --no-cov"\n')
+    assert _argv(r, "coverage") == []
+
+
+def test_addopts_wrong_type_does_not_crash(tmp_path):
+    r = _detect_py(tmp_path, "[tool.pytest.ini_options]\naddopts = 5\n")
+    assert _argv(r, "coverage") == []
+
+
+def test_pytest_table_without_addopts_adds_no_coverage(tmp_path):
+    r = _detect_py(tmp_path, "[tool.pytest.ini_options]\nminversion = '7.0'\n")
+    assert _argv(r, "coverage") == []
+
+
+def test_addopts_cov_is_exclusive_over_tool_coverage(tmp_path):
+    r = _detect_py(
+        tmp_path,
+        '[tool.pytest.ini_options]\naddopts = "--cov=calc"\n\n[tool.coverage.run]\nbranch = true\n',
+    )
+    assert _argv(r, "coverage") == _ADDOPTS_COV
+
+
+def test_tool_coverage_without_addopts_cov_is_unchanged(tmp_path):
+    r = _detect_py(
+        tmp_path,
+        '[tool.pytest.ini_options]\naddopts = "-q"\n\n[tool.coverage.run]\nbranch = true\n',
+    )
+    assert _argv(r, "coverage") == [["pytest", "--cov", "--cov-report=xml"]]

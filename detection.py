@@ -258,6 +258,70 @@ def _ini_has_section(project_path: Path, file_name: str, section: str) -> bool:
     return parser.has_section(section)
 
 
+def _split_addopts(value: str) -> list[str]:
+    """Split one addopts string like the shell would; fall back to whitespace."""
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return value.split()
+
+
+def _pytest_addopts_tokens(project_path: Path) -> list[str]:
+    """Return every pytest ``addopts`` token declared next to the build file.
+
+    Looks in pyproject.toml ([tool.pytest.ini_options] and the pytest 9
+    native [tool.pytest] table), pytest.ini [pytest], setup.cfg
+    [tool:pytest] and tox.ini [pytest].  ``addopts`` may be a string or a
+    list of strings.  Read-only: a missing, unreadable or invalid file, or a
+    value of another type, counts as no tokens.  Never raises.
+    """
+    values: list = []
+    try:
+        with open(project_path / "pyproject.toml", "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        data = {}
+    tool = data.get("tool")
+    pytest_table = tool.get("pytest") if isinstance(tool, dict) else None
+    if isinstance(pytest_table, dict):
+        ini_options = pytest_table.get("ini_options")
+        if isinstance(ini_options, dict) and "addopts" in ini_options:
+            values.append(ini_options["addopts"])
+        if "addopts" in pytest_table:
+            values.append(pytest_table["addopts"])
+    for file_name, section in (
+        ("pytest.ini", "pytest"),
+        ("setup.cfg", "tool:pytest"),
+        ("tox.ini", "pytest"),
+    ):
+        path = project_path / file_name
+        if not path.is_file():
+            continue
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                parser.read_file(fh)
+        except (OSError, UnicodeDecodeError, configparser.Error):
+            continue
+        if parser.has_option(section, "addopts"):
+            values.append(parser.get(section, "addopts"))
+    tokens: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            tokens.extend(_split_addopts(value))
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    tokens.extend(_split_addopts(item))
+    return tokens
+
+
+def _addopts_has_option(tokens: list[str], options: list) -> bool:
+    """Return True if a token is one of *options* exactly or ``option=value``."""
+    names = [o for o in options if isinstance(o, str)]
+    return any(t == o or t.startswith(o + "=") for t in tokens for o in names)
+
+
 def _package_json_has_key(project_path: Path, key: str) -> bool:
     """Return True if package.json next to the build file has top-level *key*.
 
@@ -316,7 +380,11 @@ def _config_rule_matches(project: "Project", rule: dict) -> bool:
     ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml,
     ``ini_sections``, ``package_json_keys``, or ``build_file_contains`` (a
     plugin name inside the primary build file).
+    ``addopts_contains`` (an option such as ``--cov`` inside pytest's
+    ``addopts``; ``--cov=calc`` matches, ``--cov-report=term`` does not).
     ``requires_files``: every one of these files must also be next to the build file.
+    ``addopts_not_contains``: if pytest's ``addopts`` has any of these options
+    (e.g. ``--no-cov``), the rule never matches.
     """
     applies_to = rule.get("build_files")
     if applies_to and project.primary_build_file not in applies_to:
@@ -325,6 +393,11 @@ def _config_rule_matches(project: "Project", rule: dict) -> bool:
     for name in rule.get("requires_files", []):
         if not _has_config_file(project_path, [name]):
             return False
+    addopts_yes = rule.get("addopts_contains", [])
+    addopts_no = rule.get("addopts_not_contains", [])
+    tokens = _pytest_addopts_tokens(project_path) if (addopts_yes or addopts_no) else []
+    if addopts_no and _addopts_has_option(tokens, addopts_no):
+        return False
     files = rule.get("files", [])
     if files and _has_config_file(project_path, files):
         return True
@@ -345,6 +418,8 @@ def _config_rule_matches(project: "Project", rule: dict) -> bool:
         isinstance(key, str) and _package_json_has_key(project_path, key)
         for key in rule.get("package_json_keys", [])
     ):
+        return True
+    if addopts_yes and _addopts_has_option(tokens, addopts_yes):
         return True
     needles = rule.get("build_file_contains", [])
     if needles:
@@ -630,11 +705,13 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     # for a stage that no script already covers, and only when the project
     # itself declares the tool (config file, pyproject table or INI section).  Several
     # rules can fire for one stage (different tools); identical commands run
-    # once.
+    # once.  A rule with ``exclusive = true`` that adds its command closes its
+    # stage: later rules for that stage are skipped.
     script_stages = {stage for stage in stages if commands[stage]}
+    closed_stages: set[str] = set()
     for rule in lang_cfg.get("config_commands", []):
         stage = rule.get("stage")
-        if stage not in commands or stage in script_stages:
+        if stage not in commands or stage in script_stages or stage in closed_stages:
             continue
         if not _config_rule_matches(project, rule):
             continue
@@ -646,6 +723,8 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
             continue
         seen_commands[stage].append(key)
         commands[stage].append(StageCommand(command=argv, source="config"))
+        if rule.get("exclusive") is True:
+            closed_stages.add(stage)
 
     # --- Step 3: built-in phase detection (for build systems that need no script) ---
     for stage in stages:

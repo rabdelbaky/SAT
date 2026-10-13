@@ -23,6 +23,7 @@
 | 11 | Fixtures: JS/TS | tests/fixtures/js-* | Tick checklist |
 | 12 | Fixtures: Java | tests/fixtures/java-* | Tick checklist |
 | 13+ | Remaining languages | one session each | Tick checklist |
+| 20 | Python coverage from pytest addopts (`--cov` in addopts runs `pytest --cov-report=xml`; `exclusive` rule key) | detection.py, languages.toml, tests/fixtures/python-cov-* | `python-cov-addopts` Coverage 83.3%, `python-cov-both` `--dry-run` |
 
 Fixtures (10 to 13+) are tiny; ask the agent for several languages per session if quota allows. Split fixture ownership with your colleague and share results.
 
