@@ -16,6 +16,7 @@ Cross-platform Python script (Windows/macOS/Linux, Python 3.11+, no third-party 
 1. **Input** **[NEW]**: folders only (cwd or `--path`). No zip, git URL, or single file in v1.
 2. **Find projects**: scan folder tree. Skip: node_modules, .git, .next, target, build, dist, .venv, graphify-out, .ua, .pre-llm, **[NEW]** bin, obj, venv, env, vendor, out, __pycache__, coverage, plus anything in `ignore`.
    - A build file owns only files of its own language. Each file belongs to the nearest build file above it (sub-project beats root).
+   - **[NEW]** Exception: a Maven module (listed in a parent pom.xml `<module>`) or a Gradle subproject (below a folder with settings.gradle) is built by its root build, so it is part of the root project (languages.toml `subproject_rules`).
    - One project per folder per language. Priority: Python pyproject.toml > requirements.txt; .NET .sln > .csproj. Both stay listed in `build_files`.
 3. **Find tools**: only counts if defined by a script in the build file, a plugin in the build file, a config file next to it, a built-in Maven/Gradle phase, or a pre-llm.toml override.
 4. **Match scripts to stages**: exact names and prefixes (`lint`, `lint:types`). Skip names ending :fix :watch :dev :serve :e2e :docker :deploy and anything using --fix/--write; record reason in `skipped_scripts`. Identical commands run once; different args are different commands.
