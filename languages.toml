@@ -576,7 +576,8 @@ no_tests_patterns  = ['''^0 examples, 0 failures''', '''^0 runs, 0 assertions'''
 tests_ran_patterns = ['''^[1-9]\d* examples?, ''', '''^[1-9]\d* runs?, ''']
 # SimpleCov reports 100% when no test ran ("0 / 0 (100.00%)"): coverage SKIP then.
 coverage_needs_tests = true
-tested            = false
+# Promoted after Session 18: every applicable ruby-* fixture passed with real Ruby.
+tested            = true
 
 [language.ruby.builtin_phases]
 build    = []
@@ -615,31 +616,60 @@ command             = "bundle exec rspec"
 
 [language.swift]
 extensions        = [".swift"]
-build_files       = ["Package.swift", "*.xcodeproj"]
-build_priority    = ["Package.swift", "*.xcodeproj"]
+# Swift Package Manager only.  An Xcode project (*.xcodeproj) is a folder, not a
+# file, and needs xcodebuild plus a scheme, which cannot be guessed: not supported.
+build_files       = ["Package.swift"]
+build_priority    = ["Package.swift"]
 dep_folders       = []
-dep_error_phrases = ["error: no such module", "missing package"]
+# SwiftPM downloads packages itself; offline or blocked it cannot clone them.
+# A Package.swift that needs a newer Swift than the one installed, a toolchain
+# without XCTest/Testing, or one without `swift format`, is a setup problem.
+# NOT "no such module" alone: a misspelt import prints it too (a real code error).
+dep_error_phrases  = ["error: Failed to clone repository ",
+                      "Couldn't fetch updates from remote repositories",
+                      "no such module 'XCTest'", "no such module 'Testing'"]
+dep_error_patterns = ['''is using Swift tools version \S+ but the installed version is ''',
+                      '''unknown or missing subcommand 'swift-format'''']
 stages            = ["build", "lint", "tests", "coverage"]
-coverage_files    = ["*.lcov", "lcov.info"]
+# `swift test --enable-code-coverage` exports llvm-cov JSON to
+# .build/<platform>/debug/codecov/<package name>.json.
+coverage_files    = [".build/*/debug/codecov/*.json"]
+# XCTest prints "Executed 0 tests, with 0 failures" and swift-testing prints
+# "Test run with 0 tests" when a test target has no tests; both exit 0.
+no_tests_patterns  = ['''^\s*Executed 0 tests, with ''', '''Test run with 0 tests''']
+tests_ran_patterns = ['''Executed [1-9]\d* tests?, with ''', '''Test run with [1-9]\d* tests?''']
+# A package with no test target: `swift test` exits 1 with this message.
+no_tests_fail_patterns = ['''error: no tests found''']
+# Coverage = the tests run again; with no tests there is no coverage to read.
+coverage_needs_tests = true
 tested            = false
-
-[language.swift.stage_names]
-build    = ["build"]
-lint     = ["lint", "check", "swiftlint", "swiftformat"]
-tests    = ["test", "tests"]
-coverage = ["coverage", "cov"]
-
-[language.swift.config_files]
-lint     = [".swiftlint.yml", ".swiftlint.yaml",
-            ".swiftformat", "swiftformat.yml"]
-tests    = []
-coverage = []
 
 [language.swift.builtin_phases]
 build    = ["swift build"]
 lint     = []
 tests    = ["swift test"]
-coverage = []
+coverage = ["swift test --enable-code-coverage"]
+
+# Lint is not built in.  It runs only when the project has the tool's config file.
+# SwiftLint reads only .swiftlint.yml on its own (not .swiftlint.yaml).
+# --quiet: no "Linting 'x' (1/40)" lines filling the output tail.
+[[language.swift.config_commands]]
+stage   = "lint"
+files   = [".swiftlint.yml"]
+command = "swiftlint lint --quiet"
+
+# SwiftFormat (nicklockwood) rewrites files by default; only --lint is run.
+[[language.swift.config_commands]]
+stage   = "lint"
+files   = [".swiftformat"]
+command = "swiftformat --lint ."
+
+# swift-format (Apple, ships with Swift 6 / Xcode 16).  Without --strict every
+# finding is a warning and it exits 0, so Lint would always PASS.
+[[language.swift.config_commands]]
+stage   = "lint"
+files   = [".swift-format"]
+command = "swift format lint --strict --recursive ."
 
 
 [language.cpp]

@@ -81,7 +81,7 @@ services/worker  go  go.mod
 ```
 
 *(Python is tested since Session 10, JavaScript since Session 11, Java since Session 12, Kotlin and Go since Session 14,
-C# since Session 15; the others are `[untested]` until their fixtures pass; exact whitespace may vary.)*
+C# since Session 15, Ruby since Session 18; the others are `[untested]` until their fixtures pass; exact whitespace may vary.)*
 
 **No-project exit code**: running the tool against an empty folder must exit 3
 and print `No supported projects found.` to stderr.
@@ -1220,7 +1220,8 @@ Ruby has **no build stage**: the Build cell is always `SKIP`. Checked by `python
 
 These use the Ruby interpreter and the minitest that ships with it, through `pre-llm.toml`: `lint` = `ruby -c <file>`
 (syntax check), `tests` = `ruby test_calc.rb`. Run with `--path <copy>`; the project is `.`, language
-`ruby [untested]`. They prove only that `pre-llm.toml` overrides work with a Ruby project, **not** Ruby detection.
+`ruby` (tested since Session 18, so no `[untested]` label). They prove only that `pre-llm.toml` overrides work with
+a Ruby project, **not** Ruby detection.
 
 | Fixture | Build | Lint | Tests | Coverage | Exit | Notes |
 |---|---|---|---|---|---|---|
@@ -1317,3 +1318,119 @@ No tests line (minitest has no config file to detect) and no coverage line: cove
   gem; offline the two cannot be told apart. `vendor/bundle` is not required (most projects use system or user gems).
 - **Files written into the project.** `bundle exec` writes `Gemfile.lock` and SimpleCov writes `coverage/` into the
   project folder (standard Bundler and SimpleCov behaviour); the fixtures' `.gitignore` lists them.
+
+## swift-* (Session 19)
+
+Swift **Package Manager only**. Checked by `python tests/manual_lang_check.py swift`. Each run is made in a temp copy
+(the repo is never written) and run with `--path <copy>`; the project is `.`, language `swift [untested]`. `.build/` is
+ignored by each fixture's `.gitignore`.
+
+The runs need `swift` with XCTest on PATH: full Xcode on Mac (the Command Line Tools alone have no XCTest; Xcode 16 or
+newer for `swift format`), the Swift toolchain on Windows and Linux. The SwiftLint and SwiftFormat runs need
+`swiftlint` and `swiftformat` on PATH, and the swift-format runs need `swift format`; without them those runs show
+`SKIP` (never counted as passed). No fixture has dependencies that download, and swift-missing-deps needs no internet.
+
+### Rules
+
+- **Swift Package Manager only.** The build file is `Package.swift`; build, tests and coverage are the SwiftPM
+  built-ins `swift build`, `swift test` and `swift test --enable-code-coverage`. An Xcode project (`*.xcodeproj`) is a
+  folder, not a file, and needs `xcodebuild` plus a scheme, which cannot be guessed: Xcode projects are not supported
+  (a folder with only `App.xcodeproj` and `.swift` files is not a Swift project).
+- **Lint only from config files.** Lint is not built in. It runs only when the project has the tool's config file:
+  - SwiftLint, `.swiftlint.yml` → `swiftlint lint --quiet`. SwiftLint reads only `.swiftlint.yml` on its own; with
+    only `.swiftlint.yaml` it would lint with its default rules, not the project's, so that name is not detected.
+  - SwiftFormat (nicklockwood), `.swiftformat` → `swiftformat --lint .`. SwiftFormat rewrites files by default; only
+    its read-only `--lint` form is ever run. `swiftformat.yml` is not a SwiftFormat file name.
+  - swift-format (Apple, ships with Swift 6 / Xcode 16), `.swift-format` → `swift format lint --strict --recursive .`.
+    Without `--strict` every finding is a warning and it exits 0, so Lint would always pass.
+- **Coverage** is `swift test --enable-code-coverage` (the tests run again). SwiftPM writes an llvm-cov JSON export to
+  `.build/<platform>/debug/codecov/<package>.json`, read by the `llvmcov` reader. Only the package's own sources count:
+  not `Tests/` (the test targets), not `.build/` (SwiftPM's generated test runner), not files outside the package. The
+  export's own totals mix those in (23.38% instead of 33.33% for a package where `Calc.swift` had 3 of 9 lines
+  covered), so they are not used. Swift writes no branch data: `branch_pct` is null.
+- **No tests.** A package with no test target: `swift test` prints `error: no tests found` and exits 1 → Tests `SKIP`
+  (`no_tests_found`), not FAIL. A test target with no tests: XCTest prints `Executed 0 tests` and swift-testing
+  `Test run with 0 tests`, exit 0 → Tests `SKIP` (`no_tests_found`), not a vacuous PASS. Coverage is the tests run
+  again, so it is `SKIP` (`no_tests_found`) too, with no `coverage_missing` warning.
+- **Dependency phrases** (`fail` → `dependencies_missing`, a warning): `error: Failed to clone repository ` and
+  `Couldn't fetch updates from remote repositories` (SwiftPM could not download a package: offline or blocked),
+  `is using Swift tools version ... but the installed version is ...` (`Package.swift` needs a newer Swift),
+  `no such module 'XCTest'` / `no such module 'Testing'` (a toolchain without the test frameworks), and
+  `unknown or missing subcommand 'swift-format'` (a Swift without `swift format`). **Not** `no such module` alone: a
+  misspelt import (`import Foundaton`) prints it too, and that is a real code error (Build FAIL).
+- `.build/` is written into the project by SwiftPM (like Rust's `target/`) and holds the dependency checkouts, each
+  with its own `Package.swift`: discovery skips it. SwiftLint has no option to exclude `.build/` by itself, so a project
+  whose `.swiftlint.yml` does not exclude it also gets its downloaded packages linted.
+
+### Override fixtures
+
+`swift-ok`, `swift-build-fail`, `swift-test-fail`, `swift-lint-fail` use a `pre-llm.toml` lint override that uses the
+compiler's parser, `swiftc -parse <file>`; `swift-no-linter` has none. They prove only that `pre-llm.toml` lint
+overrides and the SwiftPM built-ins work, **not** Swift lint detection (that is the swift-swiftlint, swift-swiftformat
+and swift-swift-format runs). They are the first five rows of the table below.
+
+(The test function is called `sum`, not `add`: `XCTestCase` already has an `add` method, and `add(2, 3)` inside a
+test class fails to compile.)
+
+### Real Swift runs
+
+| Run | Made from | Extra tool | Build | Lint | Tests | Coverage | Exit |
+|---|---|---|---|---|---|---|---|
+| `swift-ok` | `swift-ok` | | PASS | PASS | PASS | 100.0% | 0 |
+| `swift-build-fail` | `swift-build-fail` | | FAIL | SKIP | SKIP | SKIP | 1 |
+| `swift-test-fail` | `swift-test-fail` | | PASS | PASS | FAIL | FAIL | 1 |
+| `swift-lint-fail` | `swift-lint-fail` | | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-no-linter` | `swift-no-linter` | | PASS | WARN | PASS | 100.0% | 0 |
+| `swift-no-tests` | `swift-no-tests` (no test target) | | PASS | WARN | SKIP | SKIP | 0 |
+| `swift-zero-tests` | copy of `swift-no-linter`, `Tests/CalcTests/CalcTests.swift`: `testSum` removed (a test class with no tests) | | PASS | WARN | SKIP | SKIP | 0 |
+| `swift-typo-import` | copy of `swift-no-linter`, `Sources/Calc/Calc.swift`: `import Foundaton` added | | FAIL | SKIP | SKIP | SKIP | 1 |
+| `swift-old-toolchain` | copy of `swift-no-linter`, `Package.swift`: `swift-tools-version:5.5` → `swift-tools-version:99.0` | | WARN | WARN | WARN | WARN | 0 |
+| `swift-missing-deps` | `swift-missing-deps` (depends on a package at `https://invalid.invalid/...`) | | WARN | WARN | WARN | WARN | 0 |
+| `swift-swiftlint` | `swift-swiftlint` | swiftlint | PASS | PASS | PASS | 100.0% | 0 |
+| `swift-swiftlint-fail` | copy of `swift-swiftlint`, `Sources/Calc/Calc.swift`: `    a + b` → `    return a + b;` | swiftlint | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-swiftformat` | `swift-swiftformat` | swiftformat | PASS | PASS | PASS | 100.0% | 0 |
+| `swift-swiftformat-fail` | copy of `swift-swiftformat`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swiftformat | PASS | FAIL | PASS | 100.0% | 1 |
+| `swift-swift-format` | `swift-swift-format` | swift format | PASS | PASS | PASS | 100.0% | 0 |
+| `swift-swift-format-fail` | copy of `swift-swift-format`, `Sources/Calc/Calc.swift`: `    a + b` → `  a + b` | swift format | PASS | FAIL | PASS | 100.0% | 1 |
+
+swift-missing-deps runs with `GIT_TERMINAL_PROMPT=0`, so git never waits for input. The `.invalid` host never
+resolves, so this is what any offline or blocked download looks like, and no cache on the PC can make it pass.
+
+Report checks:
+- **swift-ok**: build `["swift", "build"]`, tests `["swift", "test"]`, coverage
+  `["swift", "test", "--enable-code-coverage"]`, all `pass`; the tests output names `Executed 1 test`. Coverage has
+  exactly one result: `format` `llvmcov`, `line_pct` 100.0, `branch_pct` null, `source_file` starting `.build/` and
+  ending `/debug/codecov/swift-ok.json` (the export was read, not an output percentage). `environment.runners` has a
+  `swift` version (not `unknown`). Afterwards the copy holds only the fixture's files plus `.build/` and `.pre-llm/`.
+- **swift-build-fail**, **swift-typo-import**: build `fail` (not `dependencies_missing`); lint, tests and coverage
+  skipped with reason `build_gate`. swift-typo-import's build output names `no such module 'Foundaton'`.
+- **swift-test-fail**: tests `fail`, output names `XCTAssertEqual failed`.
+- **swift-lint-fail**: lint command `["swiftc", "-parse", "scripts/Bad.swift"]`, status `fail` (`scripts/` is not part
+  of the package).
+- **swift-no-tests**, **swift-zero-tests**: tests and coverage both `skipped`, reason `no_tests_found`; project warnings
+  do not include `coverage_missing`.
+- **swift-old-toolchain**, **swift-missing-deps**: build `dependencies_missing`; project warning
+  `dependencies_missing`; no command `fail`. swift-old-toolchain's build output names `99.0`, swift-missing-deps's
+  names `invalid.invalid`.
+- **swift-swiftlint**: lint command `["swiftlint", "lint", "--quiet"]`, `pass`. **swift-swiftlint-fail**: lint `fail`,
+  output names `trailing_semicolon`, and `Sources/Calc/Calc.swift` is byte-for-byte the edited file after the run.
+- **swift-swiftformat**: lint command `["swiftformat", "--lint", "."]`, `pass`. **swift-swiftformat-fail**: lint
+  `fail`, output names `(indent)`, file unchanged as above.
+- **swift-swift-format**: lint command `["swift", "format", "lint", "--strict", "--recursive", "."]`, `pass`.
+  **swift-swift-format-fail**: lint `fail`, output names `[Indentation]`, file unchanged as above.
+
+The SwiftLint fixture enables one rule only (`trailing_semicolon`, at error level), so the result does not depend on
+the SwiftLint version.
+
+### swift-detect (`--dry-run` only, never needs Swift)
+
+`Package.swift`, `.swiftlint.yml`, `.swiftformat`, `.swift-format`. Expected lines after the project line:
+
+```
+  build: swift build  [builtin]
+  lint: swiftlint lint --quiet  [config]
+  lint: swiftformat --lint .  [config]
+  lint: swift format lint --strict --recursive .  [config]
+  tests: swift test  [builtin]
+  coverage: swift test --enable-code-coverage  [builtin]
+```

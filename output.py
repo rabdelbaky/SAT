@@ -250,7 +250,7 @@ _VERSION_RUNNERS = frozenset(
         "node", "npm", "npx", "yarn", "pnpm", "bun", "deno",
         "java", "javac", "mvn", "gradle", "go", "dotnet", "cargo", "rustc",
         "php", "composer", "ruby", "bundle", "rake", "swift", "make", "cmake",
-        "ctest", "ninja",
+        "ctest", "ninja", "swiftc", "swiftlint", "swiftformat",
     }
 )
 _WINDOWS_SUFFIXES = (".exe", ".cmd", ".bat")

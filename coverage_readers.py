@@ -25,6 +25,7 @@ read_coverage_file(path) -> CoverageResult | None
       - SimpleCov (coverage/.last_run.json) — Ruby, SimpleCov's own line and branch totals
       - Go cover profile (coverage.out, as written by
                        `go test -coverprofile`) — statement coverage, no branches
+      - llvm-cov JSON (.build/*/debug/codecov/*.json) — Swift, lines of the package's own sources
 
     A malformed or empty file → returns None (caller emits coverage_unreadable).
 
@@ -99,7 +100,7 @@ class CoverageResult:
         The path that was read, as a string (for the report).
     format:
         A short label: "jacoco", "cobertura", "clover", "istanbul", "lcov",
-        "gocover", "simplecov", "output".
+        "gocover", "simplecov", "llvmcov", "output".
     """
 
     line_pct: float
@@ -143,6 +144,10 @@ def _detect_format(path: Path) -> str:
     # Istanbul json-summary
     if name == "coverage-summary.json":
         return "istanbul"
+    # llvm-cov JSON export, written by `swift test --enable-code-coverage`
+    # to .build/<platform>/debug/codecov/<package>.json
+    if name.endswith(".json") and path.parent.name == "codecov":
+        return "llvmcov"
     # lcov variants
     if name in ("lcov.info",) or name.endswith(".lcov"):
         return "lcov"
@@ -570,6 +575,60 @@ def _read_simplecov(path: Path) -> Optional[CoverageResult]:
     )
 
 
+def _read_llvmcov(path: Path) -> Optional[CoverageResult]:
+    """Parse an llvm-cov JSON export and return a CoverageResult, or None.
+
+    Counts only the package's own sources: files under the project folder (the
+    parent of the nearest ``.build`` folder above *path*), not under ``Tests/``
+    (the test targets) and not under ``.build/`` (SwiftPM's generated test
+    runner).  The export's own ``data[0].totals`` mixes those in, so it is not
+    used.  Swift writes no branch data, so branch_pct is None.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("type") != "llvm.coverage.json.export":
+        return None
+    entries = data.get("data")
+    if not isinstance(entries, list) or not entries or not isinstance(entries[0], dict):
+        return None
+
+    build_dir = next((p for p in path.parents if p.name == ".build"), None)
+    if build_dir is None:
+        return None
+    project = build_dir.parent.resolve()
+
+    files = entries[0].get("files")
+    if not isinstance(files, list):
+        return None
+    count = 0
+    covered = 0
+    for entry in files:
+        try:
+            rel = Path(entry["filename"]).resolve().relative_to(project)
+            lines = entry["summary"]["lines"]
+            n = lines["count"]
+            c = lines["covered"]
+        except (TypeError, KeyError, ValueError, OSError):
+            continue
+        if not rel.parts or rel.parts[0] in (".build", "Tests"):
+            continue
+        if isinstance(n, bool) or isinstance(c, bool) or not isinstance(n, int) or not isinstance(c, int):
+            continue
+        count += n
+        covered += c
+
+    if count <= 0:
+        return None
+    return CoverageResult(
+        line_pct=round(covered / count * 100, 2),
+        branch_pct=None,
+        source_file=str(path),
+        format="llvmcov",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public: parse one file
 # ---------------------------------------------------------------------------
@@ -597,6 +656,8 @@ def read_coverage_file(path: Path) -> Optional[CoverageResult]:
             return _read_gocover(path)
         if fmt == "simplecov":
             return _read_simplecov(path)
+        if fmt == "llvmcov":
+            return _read_llvmcov(path)
         # Unknown format: not a crash, just None
         return None
     except Exception:  # noqa: BLE001 – never crash on a file

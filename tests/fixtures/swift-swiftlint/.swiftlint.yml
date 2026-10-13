@@ -1,0 +1,4 @@
+# One rule only, at error level, so the result does not depend on the SwiftLint version.
+only_rules:
+  - trailing_semicolon
+trailing_semicolon: error
