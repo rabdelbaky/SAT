@@ -67,6 +67,7 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -245,20 +246,28 @@ def _read_cobertura(path: Path) -> Optional[CoverageResult]:
     line_rate = cov_elem.get("line-rate")
     branch_rate = cov_elem.get("branch-rate")
 
-    if line_rate is None:
+    # No coverable lines (tarpaulin writes lines-valid="0" line-rate="NaN"):
+    # there is no percentage to report.
+    if line_rate is None or cov_elem.get("lines-valid") == "0":
         return None
 
     try:
         line_pct = float(line_rate) * 100.0
     except ValueError:
         return None
+    if not math.isfinite(line_pct):
+        return None
 
+    # No branches measured (tarpaulin: branches-valid="0" branch-rate="0"): no
+    # branch percentage, not 0%.
     branch_pct: Optional[float] = None
-    if branch_rate is not None:
+    if branch_rate is not None and cov_elem.get("branches-valid") != "0":
         try:
             branch_pct = float(branch_rate) * 100.0
         except ValueError:
             pass
+        if branch_pct is not None and not math.isfinite(branch_pct):
+            branch_pct = None
 
     return CoverageResult(
         line_pct=round(line_pct, 2),
@@ -413,8 +422,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
         <file>:<line>.<col>,<line>.<col> <statements> <count>
 
     Line coverage = statements in blocks with count > 0 / all statements.
-    Malformed block lines are skipped.  Returns None when the header is
-    missing or no block line parses (e.g. a package without tests).
+    A block (same ``<file>:<range>``) can appear more than once, e.g. with
+    ``-coverpkg``; like ``go tool cover`` it counts once, covered if any of
+    its lines has count > 0.  Malformed block lines are skipped.  Returns
+    None when the header is missing or no block line parses (e.g. a package
+    without tests).
     """
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -425,8 +437,7 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     if not lines or not lines[0].startswith("mode:"):
         return None
 
-    total = 0
-    covered = 0
+    blocks: dict[str, tuple[int, bool]] = {}  # "<file>:<range>" -> (statements, covered)
     for line in lines[1:]:
         # "<file>:<range> <statements> <count>" — the file name may contain spaces
         parts = line.rsplit(" ", 2)
@@ -437,10 +448,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
             count = int(parts[2])
         except ValueError:
             continue
-        total += statements
-        if count > 0:
-            covered += statements
+        _, seen = blocks.get(parts[0], (statements, False))
+        blocks[parts[0]] = (statements, seen or count > 0)
 
+    total = sum(statements for statements, _ in blocks.values())
+    covered = sum(statements for statements, hit in blocks.values() if hit)
     if total == 0:
         return None
 

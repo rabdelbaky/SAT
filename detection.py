@@ -34,13 +34,17 @@ Cross-platform: Python 3.11+, no third-party packages.
 
 from __future__ import annotations
 
+import configparser
 import fnmatch
 import json
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from discovery import solution_projects
 
 
 # ---------------------------------------------------------------------------
@@ -221,14 +225,71 @@ def _pyproject_has_table(project_path: Path, dotted: str) -> bool:
     return True
 
 
-def _build_file_text(project: "Project") -> str:
-    """Return the text of the project's primary build file ("" if unreadable)."""
+def _ini_has_section(project_path: Path, file_name: str, section: str) -> bool:
+    """Return True if INI-style *file_name* next to the build file has *section*.
+
+    Read-only.  A missing or unreadable/invalid file counts as no section.
+    """
+    path = project_path / file_name
+    if not path.is_file():
+        return False
+    parser = configparser.ConfigParser(interpolation=None)
     try:
-        return (project.path / project.primary_build_file).read_text(
-            encoding="utf-8", errors="replace"
-        )
+        with open(path, encoding="utf-8") as fh:
+            parser.read_file(fh)
+    except (OSError, UnicodeDecodeError, configparser.Error):
+        return False
+    return parser.has_section(section)
+
+
+def _package_json_has_key(project_path: Path, key: str) -> bool:
+    """Return True if package.json next to the build file has top-level *key*.
+
+    Read-only.  A missing or invalid package.json counts as no key.
+    """
+    try:
+        with open(project_path / "package.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and key in data
+
+
+_XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+
+
+def _build_file_text(project: "Project") -> str:
+    """Return the project's primary build file without comments ("" if unreadable).
+
+    A plugin that is only mentioned in a comment (or commented out) is not
+    declared.  pom.xml: <!-- --> comments.  Gradle scripts: /* */ and //
+    comments (a // inside a URL string cuts the rest of that line, which
+    never holds a plugin id).  A .sln / .slnx: the solution text plus each
+    .csproj it lists (XML comments removed; unreadable files skipped), since
+    packages such as coverlet.collector are referenced there.
+    """
+    build_file = project.path / project.primary_build_file
+    if project.primary_build_file.endswith((".sln", ".slnx")):
+        try:
+            parts = [build_file.read_text(encoding="utf-8-sig", errors="replace")]
+        except OSError:
+            return ""
+        for csproj in sorted(solution_projects(build_file)):
+            try:
+                text = csproj.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            parts.append(_XML_COMMENT.sub("", text))
+        return "\n".join(parts)
+    try:
+        text = build_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    if project.primary_build_file.endswith(".xml"):
+        return _XML_COMMENT.sub("", text)
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
 
 
 def _config_rule_matches(project: "Project", rule: dict) -> bool:
@@ -236,17 +297,33 @@ def _config_rule_matches(project: "Project", rule: dict) -> bool:
 
     Optional ``build_files`` limits a rule to projects whose primary build file
     is in the list (e.g. Maven-only rules).  The tool is then declared by any of:
-    ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml, or
-    ``build_file_contains`` (a plugin name inside the primary build file).
+    ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml,
+    ``ini_sections``, ``package_json_keys``, or ``build_file_contains`` (a
+    plugin name inside the primary build file).
     """
     applies_to = rule.get("build_files")
     if applies_to and project.primary_build_file not in applies_to:
         return False
+    project_path = project.path
     files = rule.get("files", [])
-    if files and _has_config_file(project.path, files):
+    if files and _has_config_file(project_path, files):
         return True
     if any(
-        _pyproject_has_table(project.path, t) for t in rule.get("pyproject_tables", [])
+        _pyproject_has_table(project_path, t) for t in rule.get("pyproject_tables", [])
+    ):
+        return True
+    for pair in rule.get("ini_sections", []):
+        if not (
+            isinstance(pair, list)
+            and len(pair) == 2
+            and all(isinstance(x, str) for x in pair)
+        ):
+            continue
+        if _ini_has_section(project_path, pair[0], pair[1]):
+            return True
+    if any(
+        isinstance(key, str) and _package_json_has_key(project_path, key)
+        for key in rule.get("package_json_keys", [])
     ):
         return True
     needles = rule.get("build_file_contains", [])
@@ -398,7 +475,16 @@ def _builtin_commands_for_stage(
         argv = shlex.split(raw)
     except ValueError:
         argv = raw.split()
-    return [StageCommand(command=argv, source="builtin")]
+    return [StageCommand(command=_fill_build_file(argv, project), source="builtin")]
+
+
+def _fill_build_file(argv: list[str], project: "Project") -> list[str]:
+    """Replace every argument that is exactly ``{build_file}`` with the primary build file.
+
+    .NET: a folder with both a .sln and a .csproj makes plain ``dotnet format``
+    fail and plain ``dotnet test`` run nothing, so every command names the file.
+    """
+    return [project.primary_build_file if a == "{build_file}" else a for a in argv]
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +509,6 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
         .skipped_scripts — list[SkippedScript]
     """
     stage_names: dict[str, list[str]] = lang_cfg.get("stage_names", {})
-    config_files_map: dict[str, list[str]] = lang_cfg.get("config_files", {})
     stages: list[str] = lang_cfg.get("stages", [])
     language: str = project.language
 
@@ -472,7 +557,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     # --- Step 2: config-file detection --------------------------------
     # languages.toml may declare ``config_commands`` rules.  A rule fires only
     # for a stage that no script already covers, and only when the project
-    # itself declares the tool (config file or pyproject table).  Several
+    # itself declares the tool (config file, pyproject table or INI section).  Several
     # rules can fire for one stage (different tools); identical commands run
     # once.
     script_stages = {stage for stage in stages if commands[stage]}
@@ -482,7 +567,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
             continue
         if not _config_rule_matches(project, rule):
             continue
-        argv = _command_for_script_value(rule.get("command", ""))
+        argv = _fill_build_file(_command_for_script_value(rule.get("command", "")), project)
         if not argv:
             continue
         key = tuple(argv)

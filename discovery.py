@@ -3,6 +3,7 @@
 Public API
 ----------
 discover_projects(root, languages) -> list[Project]
+solution_projects(solution) -> set[Path]
 
     Walk *root*, skipping the folders listed in SKIP_DIRS, and return one
     Project per (folder, language) pair where at least one build file for
@@ -16,6 +17,15 @@ discover_projects(root, languages) -> list[Project]
     - Each file belongs to the nearest build file above it (sub-project wins
       over root). discover_projects does not assign files to projects; that is
       the concern of later stages.
+    - Exception: a Maven module or Gradle subproject is built by its root
+      build, so it is part of the root project, not a project of its own.
+      Data-driven: languages.toml ``subproject_rules`` maps the root's
+      primary build file to a rule (``maven_modules``: the root pom.xml lists
+      the folder in <module>; ``gradle_settings``: the root folder has a
+      settings.gradle(.kts) and the sub-folder has none; ``dotnet_solution``:
+      the root .sln/.slnx lists the sub-folder's .csproj; ``cargo_workspace``:
+      the root Cargo.toml's [workspace] members, minus exclude, include the
+      sub-folder).  A rule key may be a glob (``"*.sln"``).
     - One project per folder per language.  When a folder has multiple build
       files for the same language, the priority list in languages.toml
       determines the primary build file; all matching build files are kept in
@@ -29,6 +39,9 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import fnmatch
+import re
+import tomllib
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -185,6 +198,7 @@ def discover_projects(
 
         projects.extend(_resolve_shared_build_files(found, languages, extra_skip))
 
+    projects = _drop_subprojects(projects, languages)
     projects.sort(key=lambda p: (str(p.path), p.language))
     return projects
 
@@ -232,6 +246,167 @@ def _resolve_shared_build_files(
             if _has_sources(p.path, languages[p.language].get("extensions", []), extra_skip)
         ]
         kept.extend(with_sources or group[:1])
+    return kept
+
+
+_GRADLE_SETTINGS = ("settings.gradle", "settings.gradle.kts")
+
+
+def _maven_modules(pom: Path) -> set[Path]:
+    """Return the resolved folders a pom.xml lists in <module> (any profile).
+
+    Read-only.  An unreadable or invalid pom lists nothing.  A module entry
+    may name a folder or a pom file inside it.
+    """
+    try:
+        tree = ET.parse(pom)
+    except (OSError, ET.ParseError):
+        return set()
+    folders: set[Path] = set()
+    for elem in tree.iter():
+        tag = elem.tag.rsplit("}", 1)[-1] if isinstance(elem.tag, str) else ""
+        if tag != "module" or not elem.text or not elem.text.strip():
+            continue
+        target = pom.parent / elem.text.strip()
+        if target.suffix == ".xml":
+            target = target.parent
+        folders.add(target.resolve())
+    return folders
+
+
+# Project("{type GUID}") = "Name", "relative\path.csproj", "{project GUID}"
+_SLN_PROJECT_RE = re.compile(r'^\s*Project\("[^"]*"\)\s*=\s*"[^"]*"\s*,\s*"([^"]*)"', re.MULTILINE)
+
+
+def solution_projects(solution: Path) -> set[Path]:
+    """Return the resolved paths of the .csproj files a .sln or .slnx lists.
+
+    Read-only.  ``.sln``: the second quoted value of each ``Project(...)``
+    line (backslashes become slashes).  ``.slnx``: the ``Path`` attribute of
+    every ``Project`` element at any depth.  Solution folders also appear as
+    projects, so only paths ending ``.csproj`` are kept.  An unreadable or
+    invalid file lists nothing.
+    """
+    try:
+        # dotnet new sln writes a BOM.
+        text = solution.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return set()
+    if solution.suffix == ".slnx":
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError:
+            return set()
+        paths = [
+            elem.get("Path", "")
+            for elem in root.iter()
+            if isinstance(elem.tag, str) and elem.tag.rsplit("}", 1)[-1] == "Project"
+        ]
+    else:
+        paths = _SLN_PROJECT_RE.findall(text)
+    return {
+        (solution.parent / p.replace("\\", "/")).resolve()
+        for p in paths
+        if p.endswith(".csproj")
+    }
+
+
+def _cargo_workspace_members(cargo: Path) -> set[Path]:
+    """Return the resolved folders a Cargo.toml's [workspace] members lists.
+
+    Read-only.  Each ``members`` entry is a path or glob relative to the
+    Cargo.toml folder; folders matched by ``exclude`` are removed.  An
+    unreadable or invalid file, or one without a [workspace] table, lists
+    nothing.
+    """
+    try:
+        with cargo.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return set()
+    workspace = data.get("workspace")
+    if not isinstance(workspace, dict):
+        return set()
+
+    def expand(key: str) -> set[Path]:
+        patterns = workspace.get(key, [])
+        if not isinstance(patterns, list):
+            return set()
+        folders: set[Path] = set()
+        for pattern in patterns:
+            if not isinstance(pattern, str) or not pattern:
+                continue
+            try:
+                matches = list(cargo.parent.glob(pattern))
+            except (ValueError, NotImplementedError):  # e.g. an absolute path
+                continue
+            folders.update(m.resolve() for m in matches if m.is_dir())
+        return folders
+
+    return expand("members") - expand("exclude")
+
+
+def _is_subproject_of(child: Project, root: Project, rule: str) -> bool:
+    """Return True if *root*'s own build builds *child* (see subproject_rules)."""
+    if rule == "maven_modules":
+        return (
+            child.primary_build_file == "pom.xml"
+            and child.path.resolve() in _maven_modules(root.path / root.primary_build_file)
+        )
+    if rule == "gradle_settings":
+        return (
+            child.primary_build_file.startswith("build.gradle")
+            and any((root.path / n).is_file() for n in _GRADLE_SETTINGS)
+            and not any((child.path / n).is_file() for n in _GRADLE_SETTINGS)
+        )
+    if rule == "dotnet_solution":
+        return (child.path / child.primary_build_file).resolve() in solution_projects(
+            root.path / root.primary_build_file
+        )
+    if rule == "cargo_workspace":
+        return child.primary_build_file == "Cargo.toml" and child.path.resolve() in (
+            _cargo_workspace_members(root.path / root.primary_build_file)
+        )
+    return False
+
+
+def _rule_for(rules: dict, build_file: str) -> str | None:
+    """Return the subproject rule for *build_file*: exact key first, then a glob key."""
+    if build_file in rules:
+        return rules[build_file]
+    for key, rule in rules.items():
+        if fnmatch.fnmatch(build_file, key):
+            return rule
+    return None
+
+
+def _drop_subprojects(projects: list[Project], languages: dict) -> list[Project]:
+    """Remove Maven modules / Gradle subprojects that a root project builds.
+
+    A project is dropped when another project of the same language in an
+    ancestor folder claims it under that language's ``subproject_rules``
+    (keyed by the ancestor's primary build file; with no exact key, the
+    first key that is a matching glob, e.g. ``"*.sln"``).  Nested modules
+    work pair by pair: root -> a, a -> a/b.
+    """
+    kept: list[Project] = []
+    for child in projects:
+        rules: dict = languages.get(child.language, {}).get("subproject_rules", {})
+        claimed = False
+        if rules:
+            child_path = child.path.resolve()
+            for root in projects:
+                rule = _rule_for(rules, root.primary_build_file)
+                if (
+                    rule
+                    and root.language == child.language
+                    and root.path.resolve() in child_path.parents
+                    and _is_subproject_of(child, root, rule)
+                ):
+                    claimed = True
+                    break
+        if not claimed:
+            kept.append(child)
     return kept
 
 

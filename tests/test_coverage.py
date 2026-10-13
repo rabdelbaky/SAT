@@ -127,6 +127,47 @@ def test_cobertura_line_and_branch():
     assert r.branch_pct == 65.0
 
 
+def _write_cobertura(tmp_path, attrs):
+    p = tmp_path / "cobertura.xml"
+    p.write_text(f'<?xml version="1.0"?>\n<coverage {attrs} version="1.9"><packages/></coverage>\n')
+    return p
+
+
+def test_cobertura_no_coverable_lines_returns_none(tmp_path):
+    # tarpaulin on a crate with no coverable lines: NaN must never reach the report.
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="0" lines-valid="0" line-rate="NaN" branches-valid="0" branch-rate="0"',
+    )
+    assert read_coverage_file(p) is None
+
+
+def test_cobertura_no_branches_gives_branch_none(tmp_path):
+    # tarpaulin measures no branches and writes branch-rate="0": not 0% branch coverage.
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="1" lines-valid="1" line-rate="1" '
+        'branches-covered="0" branches-valid="0" branch-rate="0"',
+    )
+    r = read_coverage_file(p)
+    assert r is not None
+    assert r.format == "cobertura"
+    assert r.line_pct == 100.0
+    assert r.branch_pct is None
+
+
+def test_cobertura_with_branches_keeps_branch_pct(tmp_path):
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="3" lines-valid="4" line-rate="0.75" '
+        'branches-covered="2" branches-valid="4" branch-rate="0.5"',
+    )
+    r = read_coverage_file(p)
+    assert r is not None
+    assert r.line_pct == 75.0
+    assert r.branch_pct == 50.0
+
+
 def test_istanbul_line_and_branch():
     r = read_coverage_file(_SAMPLES / "coverage-summary.json")
     assert r is not None
