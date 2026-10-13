@@ -996,6 +996,10 @@ Fixtures:
   needed).
 - `rust-old-toolchain` (no folder): a temp copy of `rust-ok` with `rust-version = "1.999"` added after
   `edition = "2021"`.
+- `rust-no-linker` (no folder): a temp copy of `rust-ok` run with `RUSTFLAGS=-C linker=pre-llm-no-such-linker` (a
+  linker that does not exist). `cargo build` and `cargo clippy` of a library do not link, so they pass; `cargo test`
+  must link the test binary and fails with ``error: linker `pre-llm-no-such-linker` not found``. Needs no real
+  linker, so it works on any PC with cargo.
 - `rust-tarpaulin`: `rust-ok` plus a `tarpaulin.toml` that holds only a comment. With `cargo-tarpaulin` on PATH the
   Coverage cell must be a percentage; without it, the Coverage cell must be `WARN` (cargo says
   ``no such command: `tarpaulin` ``). It is never `SKIP` when `cargo` is present; the check prints which branch ran.
@@ -1010,6 +1014,7 @@ Fixtures:
 | `rust-workspace` | PASS | PASS | PASS | SKIP | 0 |
 | `rust-missing-deps` | WARN | WARN | WARN | SKIP | 0 |
 | `rust-old-toolchain` | WARN | WARN | WARN | SKIP | 0 |
+| `rust-no-linker` | PASS | PASS | WARN | SKIP | 0 |
 | `rust-tarpaulin`, `cargo-tarpaulin` on PATH | PASS | PASS | PASS | *percentage* | 0 |
 | `rust-tarpaulin`, `cargo-tarpaulin` not on PATH | PASS | PASS | PASS | WARN | 0 |
 
@@ -1026,6 +1031,8 @@ Every run shows exactly one table row. Only `rust-tarpaulin` has a coverage comm
 - `rust-workspace`: exactly one project, path `.`; its tests output names both `member_a_adds` and `member_b_adds`.
 - `rust-missing-deps`, `rust-old-toolchain`: build `dependencies_missing`, project warnings include
   `dependencies_missing`, no command is `fail`; `rust-old-toolchain`'s build output names `requires rustc 1.999`.
+- `rust-no-linker`: tests `dependencies_missing`, its output names ``linker `pre-llm-no-such-linker` not found``;
+  project warnings include `dependencies_missing`; no command is `fail`.
 - `rust-tarpaulin` with `cargo-tarpaulin`: coverage `command` is
   `["cargo", "tarpaulin", "--workspace", "--out", "Xml", "--output-dir", "."]`, status `pass`; coverage has exactly
   one result with `source_file` `cobertura.xml`, `format` `cobertura`, `line_pct` above 0 and `branch_pct` null
@@ -1053,12 +1060,19 @@ Rules shown:
 - **Dependencies.** Setup problems only are `dependencies_missing` (WARN): `failed to download from `` ` ``,
   `offline mode (`, `requires rustc ` (a `rust-version` newer than the installed rustc), ``no such command: ` ``
   (a cargo subcommand such as `tarpaulin` not installed), `is not installed for the toolchain` (the clippy component
-  missing), and the pattern ``unable to update (registry `|https?://|ssh://|git@)`` (fetching the registry or a git
-  dependency failed). The earlier phrases were wrong: `no matching package` (a misspelt crate name),
+  missing), the pattern ``unable to update (registry `|https?://|ssh://|git@)`` (fetching the registry or a git
+  dependency failed), and the pattern ``^error: linker `[^`]+` not found`` (no linker installed: on Windows the
+  Visual Studio C++ Build Tools are missing (`link.exe`), on macOS/Linux `cc`; before, this showed Tests `FAIL` and
+  exit 1 on fine code). ``error: linking with `cc` failed`` is not matched: that is a real link error in the
+  project's code. The earlier phrases were wrong: `no matching package` (a misspelt crate name),
   `failed to select a version` (a version that does not exist) and ``failed to get ` `` (a missing path dependency)
   are real project errors, and they showed `WARN` with exit 0. `could not compile` and `error[E` appear for every
   rustc error and were never phrases. A too-new `rust-version` showed Build `FAIL`, a missing `cargo-tarpaulin`
   Coverage `FAIL`.
+- **Windows linker.** The default Rust toolchain on Windows (`x86_64-pc-windows-msvc`) needs the Visual Studio C++
+  Build Tools to link tests. Without them every Rust run except `rust-build-fail`, `rust-missing-deps`,
+  `rust-old-toolchain` and `rust-no-linker` shows Tests `WARN` instead of its expected cells. To run them all, use the
+  GNU toolchain (`rustup default stable-x86_64-pc-windows-gnu`, which has its own linker) or install the Build Tools.
 - **Lint.** `cargo clippy` ships with rustup's default profile and never changes code, so every crate has a linter
   (*no-linter* is not applicable). `cargo fmt` is not run (without `--check` it rewrites code).
 
