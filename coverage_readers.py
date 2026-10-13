@@ -15,8 +15,10 @@ read_coverage_file(path) -> CoverageResult | None
 
     Supported formats (auto-detected by filename):
       - JaCoCo XML   (jacoco.xml)          — xml.etree
-      - Cobertura XML (coverage.xml, cobertura.xml, coverage.cobertura.xml,
-                       clover.xml)         — xml.etree
+      - Cobertura XML (coverage.xml, cobertura.xml, coverage.cobertura.xml)
+                                           — xml.etree
+      - Clover XML   (clover.xml, as written by PHPUnit `--coverage-clover`)
+                                           — xml.etree
       - Istanbul json-summary
                      (coverage-summary.json) — json
       - lcov         (lcov.info, *.lcov)
@@ -67,6 +69,7 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -94,8 +97,8 @@ class CoverageResult:
     source_file:
         The path that was read, as a string (for the report).
     format:
-        A short label: "jacoco", "cobertura", "istanbul", "lcov", "gocover",
-        "output".
+        A short label: "jacoco", "cobertura", "clover", "istanbul", "lcov",
+        "gocover", "output".
     """
 
     line_pct: float
@@ -148,7 +151,10 @@ def _detect_format(path: Path) -> str:
     # JaCoCo XML — identified by 'jacoco' in the filename
     if "jacoco" in name and name.endswith(".xml"):
         return "jacoco"
-    # Cobertura / Clover XML
+    # Clover XML — identified by 'clover' in the filename
+    if "clover" in name and name.endswith(".xml"):
+        return "clover"
+    # Cobertura XML
     if name.endswith(".xml"):
         return "cobertura"
     # Ruby SimpleCov .resultset.json — not a standard format we parse
@@ -245,26 +251,92 @@ def _read_cobertura(path: Path) -> Optional[CoverageResult]:
     line_rate = cov_elem.get("line-rate")
     branch_rate = cov_elem.get("branch-rate")
 
-    if line_rate is None:
+    # No coverable lines (tarpaulin writes lines-valid="0" line-rate="NaN"):
+    # there is no percentage to report.
+    if line_rate is None or cov_elem.get("lines-valid") == "0":
         return None
 
     try:
         line_pct = float(line_rate) * 100.0
     except ValueError:
         return None
+    if not math.isfinite(line_pct):
+        return None
 
+    # No branches measured (tarpaulin: branches-valid="0" branch-rate="0"): no
+    # branch percentage, not 0%.
     branch_pct: Optional[float] = None
-    if branch_rate is not None:
+    if branch_rate is not None and cov_elem.get("branches-valid") != "0":
         try:
             branch_pct = float(branch_rate) * 100.0
         except ValueError:
             pass
+        if branch_pct is not None and not math.isfinite(branch_pct):
+            branch_pct = None
 
     return CoverageResult(
         line_pct=round(line_pct, 2),
         branch_pct=round(branch_pct, 2) if branch_pct is not None else None,
         source_file=str(path),
         format="cobertura",
+    )
+
+
+def _read_clover(path: Path) -> Optional[CoverageResult]:
+    """Parse a Clover XML report and return a CoverageResult, or None.
+
+    Clover XML structure (as written by PHPUnit --coverage-clover):
+        <coverage generated="...">
+          <project timestamp="...">
+            <file name="..."><metrics statements="4" .../></file>
+            <metrics files="1" statements="4" coveredstatements="2"
+                     conditionals="0" coveredconditionals="0" .../>
+          </project>
+        </coverage>
+
+    The <metrics> directly under <project> holds the project totals (the
+    per-file ones are ignored).  Line coverage is statement coverage.  Branch
+    coverage only when conditionals > 0 (PHPUnit always writes 0).
+    Returns None on any parse error or when there are no statements.
+    """
+    try:
+        content = path.read_bytes()
+        if not content.strip():
+            return None
+        root = ET.fromstring(content)
+    except (ET.ParseError, OSError):
+        return None
+
+    if root.tag != "coverage":
+        return None
+    metrics = root.find("project/metrics")
+    if metrics is None:
+        return None
+
+    try:
+        statements = int(metrics.get("statements", ""))
+        covered = int(metrics.get("coveredstatements", ""))
+    except ValueError:
+        return None
+    if statements <= 0:
+        return None
+    line_pct = covered / statements * 100.0
+
+    branch_pct: Optional[float] = None
+    try:
+        conditionals = int(metrics.get("conditionals", ""))
+        covered_cond = int(metrics.get("coveredconditionals", ""))
+    except ValueError:
+        conditionals = 0
+        covered_cond = 0
+    if conditionals > 0:
+        branch_pct = covered_cond / conditionals * 100.0
+
+    return CoverageResult(
+        line_pct=round(line_pct, 2),
+        branch_pct=round(branch_pct, 2) if branch_pct is not None else None,
+        source_file=str(path),
+        format="clover",
     )
 
 
@@ -413,8 +485,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
         <file>:<line>.<col>,<line>.<col> <statements> <count>
 
     Line coverage = statements in blocks with count > 0 / all statements.
-    Malformed block lines are skipped.  Returns None when the header is
-    missing or no block line parses (e.g. a package without tests).
+    A block (same ``<file>:<range>``) can appear more than once, e.g. with
+    ``-coverpkg``; like ``go tool cover`` it counts once, covered if any of
+    its lines has count > 0.  Malformed block lines are skipped.  Returns
+    None when the header is missing or no block line parses (e.g. a package
+    without tests).
     """
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -425,8 +500,7 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     if not lines or not lines[0].startswith("mode:"):
         return None
 
-    total = 0
-    covered = 0
+    blocks: dict[str, tuple[int, bool]] = {}  # "<file>:<range>" -> (statements, covered)
     for line in lines[1:]:
         # "<file>:<range> <statements> <count>" — the file name may contain spaces
         parts = line.rsplit(" ", 2)
@@ -437,10 +511,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
             count = int(parts[2])
         except ValueError:
             continue
-        total += statements
-        if count > 0:
-            covered += statements
+        _, seen = blocks.get(parts[0], (statements, False))
+        blocks[parts[0]] = (statements, seen or count > 0)
 
+    total = sum(statements for statements, _ in blocks.values())
+    covered = sum(statements for statements, hit in blocks.values() if hit)
     if total == 0:
         return None
 
@@ -469,6 +544,8 @@ def read_coverage_file(path: Path) -> Optional[CoverageResult]:
             return _read_jacoco(path)
         if fmt == "cobertura":
             return _read_cobertura(path)
+        if fmt == "clover":
+            return _read_clover(path)
         if fmt == "istanbul":
             return _read_istanbul(path)
         if fmt == "lcov":

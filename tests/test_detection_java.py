@@ -7,8 +7,11 @@ entry for java.  Rules under test:
   project (pom.xml) gets `mvn ...`, a Gradle project gets `gradle ...`.
   Never the other tool's commands.
 - Lint and coverage are NOT built-in: they run only when the build file
-  declares the plugin (or a lint config file sits next to it), per SPEC §3
-  step 3.  A bare pom.xml / build.gradle therefore has no lint command
+  declares the plugin, per SPEC §3 step 3.  A lone checkstyle.xml / pmd.xml
+  does not count: Maven ignores it unless pom.xml configures the plugin.
+- A plugin named only in a comment of the build file is not declared.
+- Gradle's build command is `gradle assemble`: `gradle build` would also run
+  test and check, hiding test and lint failures behind the build gate.  A bare pom.xml / build.gradle therefore has no lint command
   (-> no_linter_configured) and no coverage command.
 - The wrapper (mvnw / gradlew) is chosen later by the runner, so detection
   always emits plain `mvn` / `gradle`.
@@ -74,9 +77,16 @@ def test_maven_pmd_and_spotbugs_plugins(tmp_path):
     assert _argv(r, "lint") == [["mvn", "pmd:check"], ["mvn", "spotbugs:check"]]
 
 
-def test_maven_checkstyle_config_file_alone_adds_lint(tmp_path):
-    r = detect_commands(_maven(tmp_path, extra={"checkstyle.xml": "<module/>"}), _JAVA)
-    assert _argv(r, "lint") == [["mvn", "checkstyle:check"]]
+def test_maven_lint_config_file_alone_adds_nothing(tmp_path):
+    extra = {"checkstyle.xml": "<module/>", "pmd.xml": "<ruleset/>", ".checkstyle": "x"}
+    r = detect_commands(_maven(tmp_path, extra=extra), _JAVA)
+    assert _argv(r, "lint") == []
+
+
+def test_maven_plugin_in_xml_comment_is_not_declared(tmp_path):
+    plugins = "<!-- " + _plugin("maven-checkstyle-plugin") + " -->\n<!--\n" + _plugin("jacoco-maven-plugin") + "\n-->"
+    r = detect_commands(_maven(tmp_path, plugins), _JAVA)
+    assert _argv(r, "lint") == [] and _argv(r, "coverage") == []
 
 
 def test_maven_jacoco_plugin_adds_coverage(tmp_path):
@@ -103,7 +113,7 @@ def test_bare_gradle_gets_gradle_commands_not_maven(tmp_path):
         d = tmp_path / str(i)
         d.mkdir()
         r = detect_commands(_proj(d, bf, "plugins { id 'java' }"), _JAVA)
-        assert _argv(r, "build") == [["gradle", "build"]], bf
+        assert _argv(r, "build") == [["gradle", "assemble"]], bf
         assert _argv(r, "tests") == [["gradle", "test"]], bf
         assert _argv(r, "lint") == [] and _argv(r, "coverage") == [], bf
 
@@ -122,6 +132,15 @@ def test_gradle_kotlin_dsl_jacoco(tmp_path):
     kts = 'plugins { java\n jacoco }'
     r = detect_commands(_proj(tmp_path, "build.gradle.kts", kts), _JAVA)
     assert _argv(r, "coverage") == [["gradle", "jacocoTestReport"]]
+
+
+def test_gradle_plugin_in_comment_is_not_declared(tmp_path):
+    gradle = (
+        "plugins {\n  id 'java'\n  // id 'checkstyle'\n  /* id 'pmd'\n  id 'jacoco' */\n}\n"
+        "repositories { maven { url 'https://example.com/spotbugs' } }\n"
+    )
+    r = detect_commands(_proj(tmp_path, "build.gradle", gradle), _JAVA)
+    assert _argv(r, "lint") == [] and _argv(r, "coverage") == []
 
 
 def test_gradle_does_not_get_maven_rules(tmp_path):

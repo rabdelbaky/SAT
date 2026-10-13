@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from coverage_readers import (
     CoverageData,
     CoverageResult,
+    _detect_format,
     parse_coverage_from_output,
     read_coverage_file,
     read_project_coverage,
@@ -125,6 +126,109 @@ def test_cobertura_line_and_branch():
     assert r.format == "cobertura"
     assert r.line_pct == 72.0
     assert r.branch_pct == 65.0
+
+
+def _write_cobertura(tmp_path, attrs):
+    p = tmp_path / "cobertura.xml"
+    p.write_text(f'<?xml version="1.0"?>\n<coverage {attrs} version="1.9"><packages/></coverage>\n')
+    return p
+
+
+def test_cobertura_no_coverable_lines_returns_none(tmp_path):
+    # tarpaulin on a crate with no coverable lines: NaN must never reach the report.
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="0" lines-valid="0" line-rate="NaN" branches-valid="0" branch-rate="0"',
+    )
+    assert read_coverage_file(p) is None
+
+
+def test_cobertura_no_branches_gives_branch_none(tmp_path):
+    # tarpaulin measures no branches and writes branch-rate="0": not 0% branch coverage.
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="1" lines-valid="1" line-rate="1" '
+        'branches-covered="0" branches-valid="0" branch-rate="0"',
+    )
+    r = read_coverage_file(p)
+    assert r is not None
+    assert r.format == "cobertura"
+    assert r.line_pct == 100.0
+    assert r.branch_pct is None
+
+
+def test_cobertura_with_branches_keeps_branch_pct(tmp_path):
+    p = _write_cobertura(
+        tmp_path,
+        'lines-covered="3" lines-valid="4" line-rate="0.75" '
+        'branches-covered="2" branches-valid="4" branch-rate="0.5"',
+    )
+    r = read_coverage_file(p)
+    assert r is not None
+    assert r.line_pct == 75.0
+    assert r.branch_pct == 50.0
+
+
+# PHPUnit --coverage-clover output: per-file metrics, then the project totals.
+_CLOVER = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/x/src/Calc.php">
+      <metrics loc="20" ncloc="20" classes="1" methods="2" coveredmethods="1" conditionals="0" coveredconditionals="0" {file_stmts} elements="6" coveredelements="3"/>
+    </file>
+    <metrics files="1" loc="20" ncloc="20" classes="1" methods="2" coveredmethods="1" {project_cond} {project_stmts} elements="6" coveredelements="3"/>
+  </project>
+</coverage>
+"""
+
+
+def _write_clover(
+    tmp_path,
+    project_stmts='statements="4" coveredstatements="2"',
+    project_cond='conditionals="0" coveredconditionals="0"',
+    file_stmts='statements="4" coveredstatements="2"',
+):
+    p = tmp_path / "clover.xml"
+    p.write_text(_CLOVER.format(project_stmts=project_stmts, project_cond=project_cond, file_stmts=file_stmts))
+    return p
+
+
+def test_clover_phpunit_line_coverage(tmp_path):
+    p = _write_clover(tmp_path)
+    r = read_coverage_file(p)
+    assert r is not None
+    assert r.format == "clover"
+    assert r.line_pct == 50.0
+    assert r.branch_pct is None
+    assert r.source_file == str(p)
+
+
+def test_clover_uses_project_totals_not_per_file_metrics(tmp_path):
+    r = read_coverage_file(_write_clover(tmp_path, file_stmts='statements="10" coveredstatements="10"'))
+    assert r is not None
+    assert r.line_pct == 50.0
+
+
+def test_clover_no_statements_returns_none(tmp_path):
+    p = _write_clover(tmp_path, project_stmts='statements="0" coveredstatements="0"')
+    assert read_coverage_file(p) is None
+
+
+def test_clover_with_conditionals_gives_branch_pct(tmp_path):
+    r = read_coverage_file(_write_clover(tmp_path, project_cond='conditionals="4" coveredconditionals="1"'))
+    assert r is not None
+    assert r.branch_pct == 25.0
+
+
+def test_clover_without_project_metrics_returns_none(tmp_path):
+    p = tmp_path / "clover.xml"
+    p.write_text('<?xml version="1.0"?>\n<coverage generated="1"><project timestamp="1"/></coverage>\n')
+    assert read_coverage_file(p) is None
+
+
+def test_clover_and_cobertura_names_detected():
+    assert _detect_format(Path("clover.xml")) == "clover"
+    assert _detect_format(Path("coverage.xml")) == "cobertura"
 
 
 def test_istanbul_line_and_branch():

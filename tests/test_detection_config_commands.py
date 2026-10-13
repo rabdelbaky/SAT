@@ -163,3 +163,45 @@ def test_real_languages_toml_python_rules(tmp_path):
     assert _argv(r, "lint") == [["ruff", "check", "."]]
     assert _argv(r, "coverage") == [["pytest", "--cov", "--cov-report=xml"]]
     assert _argv(r, "build") == []  # python has no build stage command
+
+
+# ---------------------------------------------------------------------------
+# ini_sections: setup.cfg / tox.ini sections declare a tool (real languages.toml)
+# ---------------------------------------------------------------------------
+
+
+def _detect_real(tmp_path: Path, file_name: str, content: str):
+    (tmp_path / "requirements.txt").write_text("# no dependencies\n")
+    (tmp_path / file_name).write_text(content)
+    proj = Project(path=tmp_path, language="python", primary_build_file="requirements.txt")
+    return detect_commands(proj, load_languages()["python"])
+
+
+def test_setup_cfg_tool_pytest_section_adds_tests_command(tmp_path):
+    r = _detect_real(tmp_path, "setup.cfg", "[tool:pytest]\naddopts = -q\n")
+    assert _argv(r, "tests") == [["pytest"]]
+    assert r.commands["tests"][0].source == "config"
+
+
+def test_tox_ini_pytest_section_adds_tests_command(tmp_path):
+    r = _detect_real(tmp_path, "tox.ini", "[pytest]\naddopts = -q\n")
+    assert _argv(r, "tests") == [["pytest"]]
+
+
+def test_setup_cfg_flake8_section_adds_lint_command(tmp_path):
+    r = _detect_real(tmp_path, "setup.cfg", "[flake8]\nmax-line-length = 88\n")
+    assert _argv(r, "lint") == [["flake8", "."]]
+
+
+def test_setup_cfg_without_tool_sections_adds_nothing(tmp_path):
+    r = _detect_real(tmp_path, "setup.cfg", "[metadata]\nname = x\n")
+    assert _argv(r, "tests") == [] and _argv(r, "lint") == []
+
+
+def test_invalid_setup_cfg_does_not_crash_and_adds_nothing(tmp_path):
+    r = _detect_real(tmp_path, "setup.cfg", "[broken\naddopts = -q\n")
+    assert all(not cmds for cmds in r.commands.values())
+
+
+def test_real_languages_toml_has_no_python_config_files_table():
+    assert "config_files" not in load_languages()["python"]
