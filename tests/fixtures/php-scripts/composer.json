@@ -1,0 +1,8 @@
+{
+    "name": "fixture/php-scripts",
+    "description": "Pre-LLM Checks fixture",
+    "scripts": {
+        "lint": "php -l calc.php",
+        "test": "php run_tests.php"
+    }
+}

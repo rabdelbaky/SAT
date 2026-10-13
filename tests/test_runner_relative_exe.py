@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import runner
 from runner import resolve_executable
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="uses an executable bit")
@@ -76,3 +77,37 @@ def test_bare_name_still_uses_path_lookup(tmp_path):
 def test_relative_path_to_a_directory_is_not_an_executable(tmp_path):
     (tmp_path / "vendor" / "bin" / "phpunit").mkdir(parents=True)
     assert resolve_executable(["vendor/bin/phpunit"], tmp_path) is None
+
+
+# --- Windows: Composer writes vendor/bin/phpunit (a PHP proxy) and phpunit.bat ---
+
+def _file(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("x")
+    return path
+
+
+def test_windows_prefers_bat_over_extensionless_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    _file(tmp_path / "vendor" / "bin" / "phpunit")
+    bat = _file(tmp_path / "vendor" / "bin" / "phpunit.bat")
+    assert resolve_executable(["vendor/bin/phpunit", "--no-coverage"], tmp_path) == [str(bat), "--no-coverage"]
+
+
+def test_windows_never_returns_extensionless_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    _file(tmp_path / "vendor" / "bin" / "phpunit")
+    assert resolve_executable(["vendor/bin/phpunit"], tmp_path) is None
+
+
+def test_windows_name_with_extension_resolves_as_written(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    exe = _file(tmp_path / "vendor" / "bin" / "tool.exe")
+    assert resolve_executable(["vendor/bin/tool.exe"], tmp_path) == [str(exe)]
+
+
+def test_linux_returns_extensionless_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    tool = _file(tmp_path / "vendor" / "bin" / "phpunit")
+    _file(tmp_path / "vendor" / "bin" / "phpunit.bat")
+    assert resolve_executable(["vendor/bin/phpunit"], tmp_path) == [str(tool)]

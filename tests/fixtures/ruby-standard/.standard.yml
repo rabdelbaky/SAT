@@ -1,0 +1,2 @@
+# The project asks standardrb to rewrite files on every run.
+fix: true

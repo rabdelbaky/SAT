@@ -15,11 +15,15 @@ project_state(project_result) -> "passed" | "warnings" | "failed"
 
 collect_environment(results, version_fn=probe_version, os_name=None) -> dict
     {"os": "...", "runners": {name: first line of --version | "unknown"}}
-    for every executable that actually ran (SPEC §6).
+    for every executable that actually ran (SPEC §6).  Only known tools on
+    PATH (_VERSION_RUNNERS, called by bare name) are probed; anything else
+    (project scripts, wrappers like mvnw/gradlew, paths) is "unknown" and is
+    never executed a second time.
 
 probe_version(exe, cwd) -> str | None
-    Run ``<exe> --version`` (shell=False, 10 s) and return the first output
-    line, or None on any failure.
+    Find *exe* on PATH with shutil.which, run ``<exe> --version``
+    (shell=False, 10 s) and return the first output line, or None on any
+    failure.
 
 Cross-platform: Python 3.11+, no third-party packages.
 """
@@ -27,12 +31,12 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import platform
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
 from orchestrator import CommandRecord, ProjectResult, StageResult
-from runner import resolve_executable
 
 _STAGES = ("build", "lint", "tests", "coverage")
 _HEADERS = ("Project", "Language", "Build", "Lint", "Tests", "Coverage")
@@ -125,7 +129,15 @@ def _command_text(rec: CommandRecord) -> str:
     return " ".join(rec.command) if rec.command else ""
 
 
-def _detail(pr: ProjectResult, st: StageResult, word: str) -> str:
+def _display_log_path(log_path: str, repo_root: Path) -> str:
+    """Repo-relative with forward slashes; unchanged if outside the repo."""
+    try:
+        return Path(log_path).resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return Path(log_path).as_posix()
+
+
+def _detail(pr: ProjectResult, st: StageResult, word: str, repo_root: Path) -> str:
     """Text after "<project> / <stage>: <WORD>  " for a non-pass cell."""
     if word == "WARN":
         if st.status == "no_linter_configured":
@@ -143,7 +155,7 @@ def _detail(pr: ProjectResult, st: StageResult, word: str) -> str:
         if _word(rec.status) == word:
             text = _command_text(rec)
             if rec.log_path:
-                text += f"  (log: {rec.log_path})"
+                text += f"  (log: {_display_log_path(rec.log_path, repo_root)})"
             return text
     return ""
 
@@ -191,7 +203,7 @@ def render_terminal(
             word = cell_text(st)
             if word in ("FAIL", "TIMEOUT", "INTR", "WARN"):
                 detail_lines.append(
-                    f"  {row[0]} / {name}: {word}  {_detail(pr, st, word)}".rstrip()
+                    f"  {row[0]} / {name}: {word}  {_detail(pr, st, word, repo_root)}".rstrip()
                 )
     if len(detail_lines) > 1:
         sections.append(detail_lines)
@@ -229,6 +241,18 @@ _VERSION_ARGS: dict[str, list[str]] = {
     "java": ["-version"],
     "javac": ["-version"],
 }
+# Well-known tools that are safe to ask for a version.  Anything else
+# (project scripts, mvnw/gradlew wrappers) is never run a second time.
+_VERSION_RUNNERS = frozenset(
+    {
+        "python", "python3", "py", "pip", "pytest", "ruff", "flake8", "pylint",
+        "mypy", "tox", "nox", "poetry", "uv", "pdm", "hatch",
+        "node", "npm", "npx", "yarn", "pnpm", "bun", "deno",
+        "java", "javac", "mvn", "gradle", "go", "dotnet", "cargo", "rustc",
+        "php", "composer", "ruby", "bundle", "rake", "swift", "make", "cmake",
+        "ctest", "ninja",
+    }
+)
 _WINDOWS_SUFFIXES = (".exe", ".cmd", ".bat")
 _VERSION_TIMEOUT_S = 10
 _VERSION_MAX_CHARS = 200
@@ -246,13 +270,14 @@ def _runner_name(exe: str) -> str:
 
 def probe_version(exe: str, cwd: Path) -> Optional[str]:
     """Return the first line of ``<exe> --version``, or None if it fails."""
-    args = [exe] + _VERSION_ARGS.get(_runner_name(exe).lower(), ["--version"])
     try:
-        resolved = resolve_executable(args, cwd)
-        if resolved is None:
+        # shutil.which, not resolve_executable: never swap in mvnw/gradlew.
+        path = shutil.which(exe)
+        if path is None:
             return None
+        args = [path] + _VERSION_ARGS.get(_runner_name(exe).lower(), ["--version"])
         proc = subprocess.run(  # noqa: S603 - shell=False, version flag only
-            resolved,
+            args,
             cwd=str(cwd),
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -268,8 +293,11 @@ def probe_version(exe: str, cwd: Path) -> Optional[str]:
         return None
     for line in (proc.stdout + "\n" + proc.stderr).splitlines():
         line = line.strip()
-        if line:
-            return line[:_VERSION_MAX_CHARS]
+        # Skip banner rules ("-----", gradle) and JVM notices printed before
+        # the version ("Picked up JAVA_TOOL_OPTIONS: ...").
+        if not any(ch.isalnum() for ch in line) or line.startswith("Picked up "):
+            continue
+        return line[:_VERSION_MAX_CHARS]
     return None
 
 
@@ -293,6 +321,10 @@ def collect_environment(
                     continue
                 name = _runner_name(rec.command[0])
                 if name in runners:
+                    continue
+                exe = rec.command[0]
+                if "/" in exe or "\\" in exe or name.lower() not in _VERSION_RUNNERS:
+                    runners[name] = "unknown"
                     continue
                 try:
                     version = version_fn(rec.command[0], pr.project.path)

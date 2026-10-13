@@ -1,0 +1,9 @@
+{
+    "name": "fixture/php-fixer-script",
+    "description": "Pre-LLM Checks fixture",
+    "scripts": {
+        "lint": ["php -l calc.php", "@cs"],
+        "cs": "phpcbf --standard=PSR12 calc.php",
+        "test": "php run_tests.php"
+    }
+}

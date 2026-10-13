@@ -34,13 +34,17 @@ Cross-platform: Python 3.11+, no third-party packages.
 
 from __future__ import annotations
 
+import configparser
 import fnmatch
 import json
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from discovery import solution_projects
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +126,15 @@ _SKIP_EXACT_NAMES: frozenset[str] = frozenset({"dev", "serve", "deploy", "docker
 _SKIP_FLAGS: tuple[str, ...] = ("--fix", "--write")
 
 
-def _skip_reason(name: str, command: str) -> str | None:
-    """Return a skip reason string if this script should be skipped, else None."""
+def _skip_reason(
+    name: str, command: str, fixer_patterns: list[str] | None = None
+) -> str | None:
+    """Return a skip reason string if this script should be skipped, else None.
+
+    *fixer_patterns* (languages.toml ``fixer_patterns``) are regexes for tools
+    that rewrite code without a --fix/--write flag (e.g. phpcbf); a match skips
+    the script.  A pattern that is not a valid regex is ignored.
+    """
     # Check exact name matches first
     if name in _SKIP_EXACT_NAMES:
         return f"name is '{name}' (skip name)"
@@ -141,6 +152,14 @@ def _skip_reason(name: str, command: str) -> str | None:
     for flag in _SKIP_FLAGS:
         if flag in args:
             return f"command uses '{flag}'"
+
+    # Check tools that rewrite code by default
+    for pattern in fixer_patterns or []:
+        try:
+            if re.search(pattern, command):
+                return "command runs a fixer"
+        except re.error:
+            continue
 
     return None
 
@@ -221,14 +240,71 @@ def _pyproject_has_table(project_path: Path, dotted: str) -> bool:
     return True
 
 
-def _build_file_text(project: "Project") -> str:
-    """Return the text of the project's primary build file ("" if unreadable)."""
+def _ini_has_section(project_path: Path, file_name: str, section: str) -> bool:
+    """Return True if INI-style *file_name* next to the build file has *section*.
+
+    Read-only.  A missing or unreadable/invalid file counts as no section.
+    """
+    path = project_path / file_name
+    if not path.is_file():
+        return False
+    parser = configparser.ConfigParser(interpolation=None)
     try:
-        return (project.path / project.primary_build_file).read_text(
-            encoding="utf-8", errors="replace"
-        )
+        with open(path, encoding="utf-8") as fh:
+            parser.read_file(fh)
+    except (OSError, UnicodeDecodeError, configparser.Error):
+        return False
+    return parser.has_section(section)
+
+
+def _package_json_has_key(project_path: Path, key: str) -> bool:
+    """Return True if package.json next to the build file has top-level *key*.
+
+    Read-only.  A missing or invalid package.json counts as no key.
+    """
+    try:
+        with open(project_path / "package.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and key in data
+
+
+_XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+
+
+def _build_file_text(project: "Project") -> str:
+    """Return the project's primary build file without comments ("" if unreadable).
+
+    A plugin that is only mentioned in a comment (or commented out) is not
+    declared.  pom.xml: <!-- --> comments.  Gradle scripts: /* */ and //
+    comments (a // inside a URL string cuts the rest of that line, which
+    never holds a plugin id).  A .sln / .slnx: the solution text plus each
+    .csproj it lists (XML comments removed; unreadable files skipped), since
+    packages such as coverlet.collector are referenced there.
+    """
+    build_file = project.path / project.primary_build_file
+    if project.primary_build_file.endswith((".sln", ".slnx")):
+        try:
+            parts = [build_file.read_text(encoding="utf-8-sig", errors="replace")]
+        except OSError:
+            return ""
+        for csproj in sorted(solution_projects(build_file)):
+            try:
+                text = csproj.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            parts.append(_XML_COMMENT.sub("", text))
+        return "\n".join(parts)
+    try:
+        text = build_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    if project.primary_build_file.endswith(".xml"):
+        return _XML_COMMENT.sub("", text)
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
 
 
 def _config_rule_matches(project: "Project", rule: dict) -> bool:
@@ -236,17 +312,37 @@ def _config_rule_matches(project: "Project", rule: dict) -> bool:
 
     Optional ``build_files`` limits a rule to projects whose primary build file
     is in the list (e.g. Maven-only rules).  The tool is then declared by any of:
-    ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml, or
-    ``build_file_contains`` (a plugin name inside the primary build file).
+    ``files`` next to the build file, ``pyproject_tables`` in pyproject.toml,
+    ``ini_sections``, ``package_json_keys``, or ``build_file_contains`` (a
+    plugin name inside the primary build file).
+    ``requires_files``: every one of these files must also be next to the build file.
     """
     applies_to = rule.get("build_files")
     if applies_to and project.primary_build_file not in applies_to:
         return False
+    project_path = project.path
+    for name in rule.get("requires_files", []):
+        if not _has_config_file(project_path, [name]):
+            return False
     files = rule.get("files", [])
-    if files and _has_config_file(project.path, files):
+    if files and _has_config_file(project_path, files):
         return True
     if any(
-        _pyproject_has_table(project.path, t) for t in rule.get("pyproject_tables", [])
+        _pyproject_has_table(project_path, t) for t in rule.get("pyproject_tables", [])
+    ):
+        return True
+    for pair in rule.get("ini_sections", []):
+        if not (
+            isinstance(pair, list)
+            and len(pair) == 2
+            and all(isinstance(x, str) for x in pair)
+        ):
+            continue
+        if _ini_has_section(project_path, pair[0], pair[1]):
+            return True
+    if any(
+        isinstance(key, str) and _package_json_has_key(project_path, key)
+        for key in rule.get("package_json_keys", [])
     ):
         return True
     needles = rule.get("build_file_contains", [])
@@ -317,6 +413,49 @@ def _load_composer_scripts(project_path: Path) -> dict[str, str]:
     except (json.JSONDecodeError, OSError):
         pass
     return {}
+
+
+# Composer built-in "@" commands; any other "@name" runs the script "name".
+_COMPOSER_BUILTIN_REFS: frozenset[str] = frozenset({"php", "composer", "putenv"})
+
+
+def _composer_script_lines(project_path: Path, name: str, seen: set[str]) -> list[str]:
+    """Return every command string the composer script *name* runs.
+
+    A script value is a string or a list of strings.  An item ``@other`` runs
+    the script ``other``, whose lines are added too (recursively); ``@php``,
+    ``@composer`` and ``@putenv`` are Composer built-ins and stay as text.
+    *seen* holds the scripts already expanded, so a cycle cannot loop forever.
+    Returns [] on any read error.
+    """
+    if name in seen:
+        return []
+    seen.add(name)
+    composer = project_path / "composer.json"
+    try:
+        data = json.loads(composer.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return []
+    scripts = data.get("scripts") if isinstance(data, dict) else None
+    if not isinstance(scripts, dict):
+        return []
+    value = scripts.get(name)
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = [v for v in value if isinstance(v, str)]
+    else:
+        return []
+
+    lines: list[str] = []
+    for item in items:
+        lines.append(item)
+        stripped = item.strip()
+        if stripped.startswith("@"):
+            parts = stripped[1:].split()
+            if parts and parts[0] not in _COMPOSER_BUILTIN_REFS:
+                lines.extend(_composer_script_lines(project_path, parts[0], seen))
+    return lines
 
 
 def _load_gemfile_scripts(project_path: Path) -> dict[str, str]:
@@ -398,7 +537,16 @@ def _builtin_commands_for_stage(
         argv = shlex.split(raw)
     except ValueError:
         argv = raw.split()
-    return [StageCommand(command=argv, source="builtin")]
+    return [StageCommand(command=_fill_build_file(argv, project), source="builtin")]
+
+
+def _fill_build_file(argv: list[str], project: "Project") -> list[str]:
+    """Replace every argument that is exactly ``{build_file}`` with the primary build file.
+
+    .NET: a folder with both a .sln and a .csproj makes plain ``dotnet format``
+    fail and plain ``dotnet test`` run nothing, so every command names the file.
+    """
+    return [project.primary_build_file if a == "{build_file}" else a for a in argv]
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +571,6 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
         .skipped_scripts — list[SkippedScript]
     """
     stage_names: dict[str, list[str]] = lang_cfg.get("stage_names", {})
-    config_files_map: dict[str, list[str]] = lang_cfg.get("config_files", {})
     stages: list[str] = lang_cfg.get("stages", [])
     language: str = project.language
 
@@ -437,9 +584,17 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     # to enforce the deduplication rule.
     seen_commands: dict[str, list[tuple]] = {stage: [] for stage in stages}
 
+    fixer_patterns: list[str] = lang_cfg.get("fixer_patterns", [])
+
     for script_name, script_value in scripts.items():
-        # Check if this script should be skipped.
-        reason = _skip_reason(script_name, script_value)
+        # Check if this script should be skipped.  For composer, every command
+        # the script runs counts: all list items and any @other-script it calls.
+        check_text = script_value
+        if language == "php":
+            check_text = "\n".join(
+                _composer_script_lines(project.path, script_name, set())
+            ) or script_value
+        reason = _skip_reason(script_name, check_text, fixer_patterns)
         if reason is not None:
             skipped.append(SkippedScript(name=script_name, reason=reason))
             continue
@@ -472,7 +627,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
     # --- Step 2: config-file detection --------------------------------
     # languages.toml may declare ``config_commands`` rules.  A rule fires only
     # for a stage that no script already covers, and only when the project
-    # itself declares the tool (config file or pyproject table).  Several
+    # itself declares the tool (config file, pyproject table or INI section).  Several
     # rules can fire for one stage (different tools); identical commands run
     # once.
     script_stages = {stage for stage in stages if commands[stage]}
@@ -482,7 +637,7 @@ def detect_commands(project: "Project", lang_cfg: dict) -> DetectionResult:
             continue
         if not _config_rule_matches(project, rule):
             continue
-        argv = _command_for_script_value(rule.get("command", ""))
+        argv = _fill_build_file(_command_for_script_value(rule.get("command", "")), project)
         if not argv:
             continue
         key = tuple(argv)

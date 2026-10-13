@@ -15,12 +15,14 @@ read_coverage_file(path) -> CoverageResult | None
 
     Supported formats (auto-detected by filename):
       - JaCoCo XML   (jacoco.xml)          — xml.etree
-      - Cobertura XML (coverage.xml, cobertura.xml, coverage.cobertura.xml,
-                       clover.xml)         — xml.etree
+      - Cobertura XML (coverage.xml, cobertura.xml, coverage.cobertura.xml)
+                                           — xml.etree
+      - Clover XML   (clover.xml, as written by PHPUnit `--coverage-clover`)
+                                           — xml.etree
       - Istanbul json-summary
                      (coverage-summary.json) — json
       - lcov         (lcov.info, *.lcov)
-      - SimpleCov (coverage/.resultset.json) — Ruby, lines and branches
+      - SimpleCov (coverage/.last_run.json) — Ruby, SimpleCov's own line and branch totals
       - Go cover profile (coverage.out, as written by
                        `go test -coverprofile`) — statement coverage, no branches
 
@@ -68,6 +70,7 @@ Cross-platform: Python 3.11+, no third-party packages.
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -95,8 +98,8 @@ class CoverageResult:
     source_file:
         The path that was read, as a string (for the report).
     format:
-        A short label: "jacoco", "cobertura", "istanbul", "lcov", "gocover",
-        "simplecov", "output".
+        A short label: "jacoco", "cobertura", "clover", "istanbul", "lcov",
+        "gocover", "simplecov", "output".
     """
 
     line_pct: float
@@ -149,11 +152,14 @@ def _detect_format(path: Path) -> str:
     # JaCoCo XML — identified by 'jacoco' in the filename
     if "jacoco" in name and name.endswith(".xml"):
         return "jacoco"
-    # Cobertura / Clover XML
+    # Clover XML — identified by 'clover' in the filename
+    if "clover" in name and name.endswith(".xml"):
+        return "clover"
+    # Cobertura XML
     if name.endswith(".xml"):
         return "cobertura"
-    # Ruby SimpleCov
-    if name == ".resultset.json":
+    # Ruby SimpleCov totals (.resultset.json is raw data: "unknown", skipped)
+    if name == ".last_run.json":
         return "simplecov"
     return "unknown"
 
@@ -248,26 +254,92 @@ def _read_cobertura(path: Path) -> Optional[CoverageResult]:
     line_rate = cov_elem.get("line-rate")
     branch_rate = cov_elem.get("branch-rate")
 
-    if line_rate is None:
+    # No coverable lines (tarpaulin writes lines-valid="0" line-rate="NaN"):
+    # there is no percentage to report.
+    if line_rate is None or cov_elem.get("lines-valid") == "0":
         return None
 
     try:
         line_pct = float(line_rate) * 100.0
     except ValueError:
         return None
+    if not math.isfinite(line_pct):
+        return None
 
+    # No branches measured (tarpaulin: branches-valid="0" branch-rate="0"): no
+    # branch percentage, not 0%.
     branch_pct: Optional[float] = None
-    if branch_rate is not None:
+    if branch_rate is not None and cov_elem.get("branches-valid") != "0":
         try:
             branch_pct = float(branch_rate) * 100.0
         except ValueError:
             pass
+        if branch_pct is not None and not math.isfinite(branch_pct):
+            branch_pct = None
 
     return CoverageResult(
         line_pct=round(line_pct, 2),
         branch_pct=round(branch_pct, 2) if branch_pct is not None else None,
         source_file=str(path),
         format="cobertura",
+    )
+
+
+def _read_clover(path: Path) -> Optional[CoverageResult]:
+    """Parse a Clover XML report and return a CoverageResult, or None.
+
+    Clover XML structure (as written by PHPUnit --coverage-clover):
+        <coverage generated="...">
+          <project timestamp="...">
+            <file name="..."><metrics statements="4" .../></file>
+            <metrics files="1" statements="4" coveredstatements="2"
+                     conditionals="0" coveredconditionals="0" .../>
+          </project>
+        </coverage>
+
+    The <metrics> directly under <project> holds the project totals (the
+    per-file ones are ignored).  Line coverage is statement coverage.  Branch
+    coverage only when conditionals > 0 (PHPUnit always writes 0).
+    Returns None on any parse error or when there are no statements.
+    """
+    try:
+        content = path.read_bytes()
+        if not content.strip():
+            return None
+        root = ET.fromstring(content)
+    except (ET.ParseError, OSError):
+        return None
+
+    if root.tag != "coverage":
+        return None
+    metrics = root.find("project/metrics")
+    if metrics is None:
+        return None
+
+    try:
+        statements = int(metrics.get("statements", ""))
+        covered = int(metrics.get("coveredstatements", ""))
+    except ValueError:
+        return None
+    if statements <= 0:
+        return None
+    line_pct = covered / statements * 100.0
+
+    branch_pct: Optional[float] = None
+    try:
+        conditionals = int(metrics.get("conditionals", ""))
+        covered_cond = int(metrics.get("coveredconditionals", ""))
+    except ValueError:
+        conditionals = 0
+        covered_cond = 0
+    if conditionals > 0:
+        branch_pct = covered_cond / conditionals * 100.0
+
+    return CoverageResult(
+        line_pct=round(line_pct, 2),
+        branch_pct=round(branch_pct, 2) if branch_pct is not None else None,
+        source_file=str(path),
+        format="clover",
     )
 
 
@@ -416,8 +488,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
         <file>:<line>.<col>,<line>.<col> <statements> <count>
 
     Line coverage = statements in blocks with count > 0 / all statements.
-    Malformed block lines are skipped.  Returns None when the header is
-    missing or no block line parses (e.g. a package without tests).
+    A block (same ``<file>:<range>``) can appear more than once, e.g. with
+    ``-coverpkg``; like ``go tool cover`` it counts once, covered if any of
+    its lines has count > 0.  Malformed block lines are skipped.  Returns
+    None when the header is missing or no block line parses (e.g. a package
+    without tests).
     """
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -428,8 +503,7 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     if not lines or not lines[0].startswith("mode:"):
         return None
 
-    total = 0
-    covered = 0
+    blocks: dict[str, tuple[int, bool]] = {}  # "<file>:<range>" -> (statements, covered)
     for line in lines[1:]:
         # "<file>:<range> <statements> <count>" — the file name may contain spaces
         parts = line.rsplit(" ", 2)
@@ -440,10 +514,11 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
             count = int(parts[2])
         except ValueError:
             continue
-        total += statements
-        if count > 0:
-            covered += statements
+        _, seen = blocks.get(parts[0], (statements, False))
+        blocks[parts[0]] = (statements, seen or count > 0)
 
+    total = sum(statements for statements, _ in blocks.values())
+    covered = sum(statements for statements, hit in blocks.values() if hit)
     if total == 0:
         return None
 
@@ -455,14 +530,22 @@ def _read_gocover(path: Path) -> Optional[CoverageResult]:
     )
 
 
-def _read_simplecov(path: Path) -> Optional[CoverageResult]:
-    """Parse a SimpleCov .resultset.json and return a CoverageResult, or None.
+def _simplecov_pct(value: object) -> Optional[float]:
+    """Return *value* as a percentage if it is a finite number in [0, 100], else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not 0.0 <= value <= 100.0:
+        return None
+    return float(value)
 
-    Each top-level key is a command name (RSpec, Minitest, ...) holding
-    ``coverage`` -> {file: {"lines": [...], "branches": {...}}} (the old format
-    stores the line array directly).  Lines are merged across command names: a
-    line is covered if any command hit it; ``null`` lines are not relevant.
-    Branch coverage counts the leaf branch hit counts when present.
+
+def _read_simplecov(path: Path) -> Optional[CoverageResult]:
+    """Parse a SimpleCov coverage/.last_run.json and return a CoverageResult, or None.
+
+    The file holds SimpleCov's own totals, the numbers it prints, after
+    ``# :nocov:`` and other exclusions: ``{"result": {"line": 80.0, "branch": 50.0}}``
+    (SimpleCov 0.18 and later) or ``{"result": {"covered_percent": 85.71}}``
+    (older).  ``branch`` is absent when branch coverage is off.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -470,43 +553,18 @@ def _read_simplecov(path: Path) -> Optional[CoverageResult]:
         return None
     if not isinstance(data, dict):
         return None
-
-    merged: dict[str, list] = {}  # file -> merged line hits (None = not relevant)
-    branch_total = 0
-    branch_covered = 0
-    for command_set in data.values():
-        if not isinstance(command_set, dict):
-            continue
-        files = command_set.get("coverage")
-        if not isinstance(files, dict):
-            continue
-        for fname, entry in files.items():
-            lines = entry.get("lines") if isinstance(entry, dict) else entry
-            if not isinstance(lines, list):
-                continue
-            prev = merged.setdefault(fname, [None] * len(lines))
-            if len(prev) < len(lines):
-                prev.extend([None] * (len(lines) - len(prev)))
-            for i, hits in enumerate(lines):
-                if isinstance(hits, int) and not isinstance(hits, bool):
-                    prev[i] = hits if prev[i] is None else max(prev[i], hits)
-            if isinstance(entry, dict) and isinstance(entry.get("branches"), dict):
-                for arms in entry["branches"].values():
-                    if isinstance(arms, dict):
-                        for hits in arms.values():
-                            if isinstance(hits, int):
-                                branch_total += 1
-                                if hits > 0:
-                                    branch_covered += 1
-
-    relevant = [h for lines in merged.values() for h in lines if h is not None]
-    if not relevant:
+    result = data.get("result")
+    if not isinstance(result, dict):
         return None
-    covered = sum(1 for h in relevant if h > 0)
+
+    line = result["line"] if "line" in result else result.get("covered_percent")
+    line_pct = _simplecov_pct(line)
+    if line_pct is None:
+        return None
 
     return CoverageResult(
-        line_pct=round(covered / len(relevant) * 100.0, 2),
-        branch_pct=round(branch_covered / branch_total * 100.0, 2) if branch_total else None,
+        line_pct=round(line_pct, 2),
+        branch_pct=_simplecov_pct(result.get("branch")),
         source_file=str(path),
         format="simplecov",
     )
@@ -529,6 +587,8 @@ def read_coverage_file(path: Path) -> Optional[CoverageResult]:
             return _read_jacoco(path)
         if fmt == "cobertura":
             return _read_cobertura(path)
+        if fmt == "clover":
+            return _read_clover(path)
         if fmt == "istanbul":
             return _read_istanbul(path)
         if fmt == "lcov":
@@ -562,8 +622,8 @@ _OUTPUT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"Lines\s*:\s*(\d+(?:\.\d+)?)%", re.MULTILINE | re.IGNORECASE),
     # SimpleCov console summary: "... 12 / 14 LOC (85.71%) covered."
     re.compile(r"\((\d+(?:\.\d+)?)%\)\s+covered", re.MULTILINE),
-    # SimpleCov / Cobertura text: "Line Coverage: 91.2%"
-    re.compile(r"Line Coverage:\s*(\d+(?:\.\d+)?)%", re.MULTILINE),
+    # SimpleCov: "Line Coverage: 91.2% (12 / 14)" (0.22) and "Line coverage: 4 / 5 (80.00%)" (1.x)
+    re.compile(r"^Line coverage:\s*(?:\d+\s*/\s*\d+\s*\()?(\d+(?:\.\d+)?)%", re.MULTILINE | re.IGNORECASE),
     # Generic last-resort: any line ending in " 85%" or " 85.2%"
     re.compile(r"\b(\d+(?:\.\d+)?)%\s*$", re.MULTILINE),
 ]
